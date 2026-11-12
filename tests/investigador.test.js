@@ -4,6 +4,7 @@ import {
   consultasDe,
   crearConversacion,
   crearInvestigador,
+  porTurnos,
   seccionesDe,
 } from "../src/investigador.js";
 
@@ -327,4 +328,47 @@ test("si el tema amerita libros, una cuarta parte de las búsquedas va a catálo
   assert.deepEqual(web, ["w1", "w2", "w3"]);
   assert.ok(eventos.some((e) => e.tipo === "aviso" && e.datos.texto === "Una cuarta parte de las búsquedas va a: libros."));
   assert.ok(eventos.some((e) => e.tipo === "consulta" && e.datos.destino === "libros"));
+});
+
+test("al recortar consultas, cada idioma entra por turno", () => {
+  const consultas = ["es1", "es2", "es3", "en1", "en2", "ja1"].map((texto) => ({
+    texto,
+    idioma: texto.slice(0, 2),
+  }));
+  assert.deepEqual(
+    porTurnos(consultas).slice(0, 4).map((consulta) => consulta.texto),
+    ["es1", "en1", "ja1", "es2"],
+  );
+});
+
+test("antes del mínimo de búsquedas no acepta que ya alcanza y pide profundizar", async () => {
+  const revisiones = [];
+  const investigador = crearInvestigador({
+    llm: {
+      ...llmFijo,
+      completarJSON: async (mensajes) => {
+        const texto = mensajes.at(-1).content;
+        if (!texto.includes('"completo"')) return { consultas: ["a", "b"] };
+        revisiones.push(texto.includes("Todavía no alcanza"));
+        // El modelo siempre dice que alcanza, pero deja consultas por si se las exigen.
+        return { completo: true, consultas: [`r${revisiones.length}-1`, `r${revisiones.length}-2`] };
+      },
+    },
+    opciones: {
+      ...OPCIONES,
+      consultasIniciales: 2,
+      consultasPorRonda: 2,
+      rondasExtra: 10,
+      minBusquedas: 6,
+      maxBusquedas: 20,
+    },
+    buscar: async (consulta) => ({
+      resultados: [{ titulo: consulta, url: `https://a.test/${consulta}`, contenido: LARGO }],
+    }),
+    leerPagina: async () => assert.fail("no hace falta leer"),
+  });
+  const conversacion = crearConversacion("id", "ana", "Tema");
+  await investigador.investigar(conversacion, flujoDe([]));
+  assert.deepEqual(revisiones, [true, true, false], "exige hasta llegar a 6 y después acepta");
+  assert.equal(conversacion.consultas.length, 6);
 });

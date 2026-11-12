@@ -144,21 +144,37 @@ function armarIndice() {
   indice.hidden = !lista.children.length;
   indice.querySelector("details").open = amplio.matches;
 
-  // Marca en el índice la sección que se está leyendo.
+  // Marca en el índice la última sección cuyo título ya pasó por arriba; se recalcula con cada
+  // scroll, así también acierta cuando se salta de golpe a otra parte.
   const enlaces = new Map([...lista.querySelectorAll("a")].map((a) => [a.hash.slice(1), a]));
-  const observador = new IntersectionObserver(
-    (entradas) => {
-      const visible = entradas.find((entrada) => entrada.isIntersecting);
-      if (!visible) return;
-      for (const [clave, enlace] of enlaces) {
-        if (clave === visible.target.id) enlace.setAttribute("aria-current", "true");
-        else enlace.removeAttribute("aria-current");
-      }
+  const titulos = [...documento.querySelectorAll("h2")];
+  const marcar = () => {
+    let actual = titulos[0];
+    for (const titulo of titulos) {
+      if (titulo.getBoundingClientRect().top < 120) actual = titulo;
+      else break;
+    }
+    // Al final de la página los últimos títulos no llegan arriba: se marca el último.
+    if (innerHeight + scrollY >= document.documentElement.scrollHeight - 4) actual = titulos.at(-1);
+    for (const [clave, enlace] of enlaces) {
+      if (clave === actual?.id) enlace.setAttribute("aria-current", "true");
+      else enlace.removeAttribute("aria-current");
+    }
+  };
+  let pendiente = false;
+  addEventListener(
+    "scroll",
+    () => {
+      if (pendiente) return;
+      pendiente = true;
+      requestAnimationFrame(() => {
+        pendiente = false;
+        marcar();
+      });
     },
-    { rootMargin: "-70px 0px -70% 0px" },
+    { passive: true },
   );
-  for (const titulo of documento.querySelectorAll("h2")) observador.observe(titulo);
-  lista.querySelector("a")?.setAttribute("aria-current", "true");
+  marcar();
 }
 
 // Vista previa de cada cita: con mouse aparece al pasar por encima y el clic lleva a la lista;

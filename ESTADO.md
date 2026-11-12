@@ -150,9 +150,23 @@ que la PC de Franco esté prendida, sin costo, con historial guardado por person
 
 - Publicado (commit 1290004): Pages y Render con panel, PDF arreglado y Exhaustiva nueva.
   Verificado en la página real: CORS, entrar, historial desde Neon, PDF (7 págs., sin desbordes).
-- Exhaustiva real corriendo en Render desde 11:11 (id e88e1822-b73c-4ad1-bfb6-ef027ee7f6ce,
-  baterías de estado sólido). Sin seguimiento automático: Franco avisa cuando termina; recién
-  ahí push (el redespliegue la cortaría) y revisión del resultado.
+- Exhaustiva real terminada (id e88e1822…, baterías de estado sólido, versión anterior: sin
+  gráficos/libros/sitios): 2 h 17 min, 40 búsquedas (es 18, en 14, zh 6, ko 2), 195 fuentes
+  leídas, 60 descartadas, 10 secciones + resumen + conclusiones, 151 fuentes citadas, PDF de 40
+  páginas sin desbordes. El modelo dio el tema por cubierto en la ronda 4 (usó 40 de ~97).
+  «Ver informe» probado con este informe desde Pages: 14 entradas de índice, 804 citas, 52
+  tablas, descargas HTML 305 KB y PDF 1,1 MB.
+- Push hecho (8f7d7b9): Render y Pages con árbol, informe HTML, gráficos, libros, sitios.
+  Código de acceso nuevo en Render y en `.env` (el valor completo es franco:<código>:0).
+- Sin push: arreglos tras la revisión: japonés elegido sin búsquedas → `porTurnos` reparte las
+  consultas por idioma al recortar; página con HTML roto rompía Readability → «sin contenido
+  legible»; PDF dejaba «(, China)» al quitar chino → `aptoParaPDF` limpia esos restos; índice
+  del informe HTML se recalcula con el scroll (también al saltar y al final). Mínimo de 60
+  búsquedas antes de aceptar «ya alcanza» (`MIN_BUSQUEDAS`, decisión de Franco); igual corta si
+  20 fuentes seguidas no aportan. 48 pruebas pasan.
+- Siguiente: tras el push, lanzar una Exhaustiva de prueba en Render que active todo (sitios
+  iea.org/irena.org, Google Scholar, libros, gráficos y mapa) sobre energía solar fotovoltaica
+  2010–2026; Franco avisa cuando termina.
 - Bloqueo por intentos NO funcionaba en Render (9 fallos → 401, el código correcto entró): detrás
   de Cloudflare, `req.ip` con CONFIAR_EN_PROXY=1 es el borde de Cloudflare, que cambia. Arreglado
   sin push: `CABECERA_IP=cf-connecting-ip` (render.yaml) y `ipDe()` en `src/app.js`; prueba nueva.

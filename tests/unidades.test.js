@@ -173,6 +173,8 @@ test("PDF: los símbolos que la fuente no tiene se reemplazan o se quitan", () =
   assert.equal(aptoParaPDF("Ñandú ¿qué? «sí» – 20 °C · x² ≤ 3"), "Ñandú ¿qué? «sí» – 20 °C · x² ≤ 3");
   const markdown = "# Informe\r\n\n## Resumen\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n\tcódigo";
   assert.equal(aptoParaPDF(markdown), markdown, "los saltos de línea y tabulaciones se conservan");
+  assert.equal(aptoParaPDF("Qingtao (清陶能源, China) y Sunwoda (欣旺达) [3]"), "Qingtao (China) y Sunwoda [3]");
+  assert.equal(aptoParaPDF("f(x) = (a, b)"), "f(x) = (a, b)", "sin caracteres quitados no se toca nada");
 });
 
 test("PDF: con la plantilla, la línea Pregunta da el título y el nombre del archivo", () => {

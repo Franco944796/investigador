@@ -46,13 +46,23 @@ const SUSTITUTOS = {
 const SIN_GLIFO_PERO_NECESARIOS = new Set(["\n", "\r", "\t"]);
 
 export function aptoParaPDF(texto) {
-  return [...texto]
+  let quitados = false;
+  const apto = [...texto]
     .map((caracter) => {
       if (SIN_GLIFO_PERO_NECESARIOS.has(caracter)) return caracter;
       if (ROBOTO.hasGlyphForCodePoint(caracter.codePointAt(0))) return caracter;
-      return SUSTITUTOS[caracter] ?? (/\s/.test(caracter) ? " " : "");
+      const sustituto = SUSTITUTOS[caracter] ?? (/\s/.test(caracter) ? " " : "");
+      if (!sustituto) quitados = true;
+      return sustituto;
     })
     .join("");
+  // Al quitar nombres en chino o japonés quedan restos como "Qingtao (, China)" o "()".
+  return quitados
+    ? apto
+        .replace(/\(\s*[,;:·]\s*/g, "(")
+        .replace(/\s*[,;:·]\s*\)/g, ")")
+        .replace(/ ?\(\s*\)/g, "")
+    : apto;
 }
 
 // El informe lo escribe un modelo: el PDF no debe poder leer archivos ni URLs por su cuenta.

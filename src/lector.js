@@ -119,6 +119,8 @@ export async function descargarImagen(direccion, { signal } = {}) {
 
 export function extraerTexto(html) {
   const { document } = parseHTML(html);
+  // Algunos HTML rotos dejan el documento sin raíz y Readability falla con un error interno.
+  if (!document.documentElement) return { titulo: "", texto: "" };
   const tituloPagina = document.title ?? "";
   const articulo = new Readability(document).parse();
   if (articulo?.textContent) {

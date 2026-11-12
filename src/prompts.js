@@ -104,7 +104,7 @@ Si la página no aporta nada relevante al tema, responde únicamente: IRRELEVANT
   ];
 }
 
-export function promptRevision(conversacion, cantidad, dirigidas = 0) {
+export function promptRevision(conversacion, cantidad, dirigidas = 0, { exigir = false } = {}) {
   const total = conversacion.fuentes.length || 1;
   const recorte = Math.max(120, Math.min(MAX_NOTAS_EN_REVISION, Math.floor(MAX_REVISION / total) - 80));
   const idiomas = conversacion.idiomas?.length
@@ -127,7 +127,11 @@ ${conversacion.consultas.map((consulta) => `- ${consulta}`).join("\n")}
 Lo reunido hasta ahora:
 ${fichas(conversacion.fuentes, recorte)}
 
-Indica si con esto alcanza para un informe exhaustivo. Si faltan aspectos importantes, propone hasta ${cantidad} consultas nuevas, distintas de las ya hechas, que los cubran. ${CORTA}
+${
+        exigir
+          ? `Todavía no alcanza para un informe exhaustivo: propone hasta ${cantidad} consultas nuevas, distintas de las ya hechas, para profundizar en lo menos cubierto, conseguir datos más recientes o más precisos, aclarar lo que las fuentes se contradicen y sumar fuentes en otros idiomas. Responde con "completo": false.`
+          : `Indica si con esto alcanza para un informe exhaustivo. Si faltan aspectos importantes, propone hasta ${cantidad} consultas nuevas, distintas de las ya hechas, que los cubran.`
+      } ${CORTA}
 ${dirigidas ? destinoDeRevision(conversacion.destinos, dirigidas) : ""}
 ${idiomas}`,
     },

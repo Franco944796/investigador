@@ -131,6 +131,22 @@ const conDestino = (consultas, destinos) => {
   return consultas.map((consulta, indice) => ({ ...consulta, destino: lista[indice % lista.length] }));
 };
 
+// Al recortar una lista de consultas, cada idioma entra por turno: si el modelo las agrupó por
+// idioma, recortar las primeras dejaba afuera a los últimos (pasó con el japonés).
+export function porTurnos(consultas) {
+  const grupos = new Map();
+  for (const consulta of consultas) {
+    const clave = consulta.idioma ?? "";
+    if (!grupos.has(clave)) grupos.set(clave, []);
+    grupos.get(clave).push(consulta);
+  }
+  const resultado = [];
+  for (let i = 0; resultado.length < consultas.length; i++) {
+    for (const grupo of grupos.values()) if (grupo[i]) resultado.push(grupo[i]);
+  }
+  return resultado;
+}
+
 const MAX_POR_SECCION = 40;
 
 // Normaliza el índice que propone el modelo. Las fuentes que no quedaron en ninguna sección van a
@@ -344,9 +360,9 @@ export function crearInvestigador({
       return { web: cantidad - dirigidas, dirigidas };
     };
     const filtrar = (lista, maximo) =>
-      consultasDe(lista)
-        .filter((consulta) => !conversacion.consultas.includes(consulta.texto))
-        .slice(0, maximo);
+      porTurnos(
+        consultasDe(lista).filter((consulta) => !conversacion.consultas.includes(consulta.texto)),
+      ).slice(0, maximo);
     const buscarTanda = async (web, dirigidas) => {
       const tanda = [...web, ...conDestino(dirigidas, conversacion.destinos)];
       const resultado = await incorporar(conversacion, tanda, contexto, cupo());
@@ -402,14 +418,15 @@ export function crearInvestigador({
       if (!conversacion.fuentes.length || agotada(conversacion) || busquedasRestantes() <= 0) break;
       const cupos = reparto(Math.min(opciones.consultasPorRonda, busquedasRestantes()));
       emitir("etapa", { texto: "Revisando qué falta cubrir" });
+      const exigir = conversacion.consultas.length < Math.min(opciones.minBusquedas ?? 0, total);
       let nuevasWeb = [];
       let nuevasDirigidas = [];
       try {
         const revision = await llm.completarJSON(
-          promptRevision(conversacion, cupos.web, cupos.dirigidas),
+          promptRevision(conversacion, cupos.web, cupos.dirigidas, { exigir }),
           contexto,
         );
-        if (revision.completo !== true) {
+        if (exigir || revision.completo !== true) {
           nuevasWeb = filtrar(revision.consultas, cupos.web);
           nuevasDirigidas = filtrar(revision.dirigidas, cupos.dirigidas);
         }

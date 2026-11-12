@@ -73,6 +73,8 @@ export function leerConfig(env = process.env) {
       rondasExtra: entero(env, "RONDAS_EXTRA", 20),
       consultasPorRonda: entero(env, "CONSULTAS_POR_RONDA", 8),
       maxBusquedas: entero(env, "MAX_BUSQUEDAS", 100),
+      // Antes de esto no se acepta el «ya alcanza» del modelo (en la prueba real cortó en 40).
+      minBusquedas: entero(env, "MIN_BUSQUEDAS", 60),
       // 0 = sin tope.
       maxFuentes: entero(env, "MAX_FUENTES", 0) || Infinity,
       multilingue: true,
