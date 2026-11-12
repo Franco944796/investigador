@@ -1,0 +1,27 @@
+{
+  "name": "investigador",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.9"
+  },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env servidor.js",
+    "dev": "node --env-file-if-exists=.env --watch servidor.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@mozilla/readability": "^0.6.0",
+    "dompurify": "^3.4.17",
+    "express": "^5.3.0",
+    "fontkit": "^2.0.4",
+    "linkedom": "^0.18.15",
+    "marked": "^18.2.0",
+    "pdfmake": "^0.3.14",
+    "pg": "^8.23.1"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.16"
+  }
+}

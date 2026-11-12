@@ -1,0 +1,51 @@
+services:
+  - type: web
+    name: investigador
+    runtime: node
+    plan: free
+    region: virginia
+    buildCommand: npm ci --omit=dev
+    startCommand: node servidor.js
+    healthCheckPath: /salud
+    envVars:
+      - key: HOST
+        value: 0.0.0.0
+      - key: CONFIAR_EN_PROXY
+        value: "1"
+      # El disco de Render se borra en cada reinicio: con el secreto fijo acá, las sesiones
+      # siguen valiendo después de que el servicio se duerme.
+      - key: SECRETO_SESION
+        generateValue: true
+      - key: CODIGOS_ACCESO
+        sync: false
+      # Cadena de conexión de Neon (Postgres): guarda el historial de investigaciones.
+      - key: DATABASE_URL
+        sync: false
+      - key: LIMITE_DIARIO
+        value: "5"
+      - key: TAVILY_CLAVE
+        sync: false
+      - key: LLM_1_URL
+        value: https://integrate.api.nvidia.com/v1
+      - key: LLM_1_CLAVE
+        sync: false
+      - key: LLM_1_MODELO
+        value: nvidia/nemotron-3-ultra-550b-a55b,mistralai/mistral-large-4-1t-a52b,openai/gpt-oss-20b,z-ai/glm-5.3-flash
+      - key: LLM_2_URL
+        value: https://api.groq.com/openai/v1
+      - key: LLM_2_CLAVE
+        sync: false
+      - key: LLM_2_MODELO
+        value: openai/gpt-oss-120b
+      - key: LLM_3_URL
+        value: https://api.mistral.ai/v1
+      - key: LLM_3_CLAVE
+        sync: false
+      - key: LLM_3_MODELO
+        value: mistral-small-latest
+      - key: LLM_4_URL
+        value: https://openrouter.ai/api/v1
+      - key: LLM_4_CLAVE
+        sync: false
+      - key: LLM_4_MODELO
+        value: nvidia/nemotron-3-ultra-550b-a55b:free
