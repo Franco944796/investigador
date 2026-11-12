@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="light" />
+    <meta name="api" content="" />
+    <title>Informe · Investigador</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="informe.css" />
+  </head>
+  <body>
+    <p id="conexion" class="conexion" role="status" hidden>
+      Despertando el servidor (hasta un minuto)…
+    </p>
+
+    <header class="herramientas">
+      <a class="volver" href="./">← Investigador</a>
+      <div class="botones">
+        <button id="descargar-html" type="button" class="boton" disabled>Descargar HTML</button>
+        <button id="descargar-pdf" type="button" class="boton" disabled>Descargar PDF</button>
+      </div>
+    </header>
+    <p id="aviso" class="aviso" role="alert" hidden></p>
+
+    <div class="hoja">
+      <nav id="indice" class="indice" aria-label="Índice" hidden>
+        <details>
+          <summary>Índice</summary>
+          <ol></ol>
+        </details>
+      </nav>
+      <article id="documento" class="documento">
+        <p class="estado">Cargando el informe…</p>
+      </article>
+    </div>
+
+    <div id="vista-cita" class="vista-cita" role="tooltip" hidden></div>
+
+    <script src="vendor/marked.js"></script>
+    <script src="vendor/purify.js"></script>
+    <script type="module" src="informe.js"></script>
+  </body>
+</html>

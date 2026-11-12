@@ -91,8 +91,14 @@ test("investigación en segundo plano, seguimiento, PDF, historial y límite dia
   assert.equal(tipos.at(-1), "fin");
   assert.ok(tipos.includes("espera"), "el 429 inicial debe avisar que espera");
 
-  const consultas = eventos.filter((evento) => evento.tipo === "consulta").map((e) => e.datos.texto);
-  assert.deepEqual(consultas, ["primera consulta", "segunda consulta", "consulta extra"]);
+  const consultas = eventos.filter((evento) => evento.tipo === "consulta").map((e) => e.datos);
+  assert.deepEqual(consultas, [
+    { id: 1, texto: "primera consulta", idioma: "es" },
+    { id: 2, texto: "second query", idioma: "en" },
+    { id: 3, texto: "consulta extra" },
+  ]);
+  const leyendo = eventos.filter((e) => e.tipo === "fuente" && e.datos.estado === "leyendo");
+  assert.ok(leyendo.every((e) => [1, 2, 3].includes(e.datos.consulta)), "cada fuente dice su búsqueda");
 
   const fuentes = eventos.filter((evento) => evento.tipo === "fuente").map((evento) => evento.datos);
   const listas = fuentes.filter((fuente) => fuente.estado === "lista");
@@ -124,6 +130,21 @@ test("investigación en segundo plano, seguimiento, PDF, historial y límite dia
   const pdf = await ana.pedir(`/api/informe/${conversacion}`);
   assert.equal(pdf.status, 200);
   assert.match(pdf.headers.get("content-disposition"), /filename="tema-de-prueba\.pdf"/);
+
+  const html = await (await ana.pedir(`/api/conversaciones/${conversacion}/informe`)).json();
+  assert.equal(html.titulo, "Tema de prueba");
+  assert.equal(html.archivo, "tema-de-prueba");
+  assert.equal(html.informe, informe);
+  assert.equal(html.fuentes.length, 8, "incluye las 2 que sumó el seguimiento");
+  assert.deepEqual(Object.keys(html.fuentes[0]).sort(), ["n", "titulo", "url"], "sin las notas");
+  assert.deepEqual(html.intercambios, [
+    { pregunta: "¿Cuál conviene?", respuesta: "Según el informe, la opción B duplica a la A [2]." },
+  ]);
+  assert.deepEqual(
+    { ...html.datos, inicio: typeof html.datos.inicio, fin: typeof html.datos.fin },
+    { busquedas: 3, idiomas: ["es", "en"], leidas: 6, descartadas: 6, inicio: "number", fin: "number" },
+    "los datos son del primer turno, sin la búsqueda del seguimiento",
+  );
   assert.equal(Buffer.from(await pdf.arrayBuffer()).subarray(0, 5).toString(), "%PDF-");
 
   const lista = await (await ana.pedir("/api/conversaciones")).json();
@@ -134,11 +155,11 @@ test("investigación en segundo plano, seguimiento, PDF, historial y límite dia
   const beto = cliente(base);
   await beto.entrar("codigo-de-beto");
   assert.equal((await beto.pedir(`/api/informe/${conversacion}`)).status, 404);
+  assert.equal((await beto.pedir(`/api/conversaciones/${conversacion}/informe`)).status, 404);
   assert.equal((await beto.eventos(conversacion)).estado, 404);
   assert.deepEqual(await (await beto.pedir("/api/conversaciones")).json(), []);
 
   assert.equal((await ana.investigar("Otro tema")).status, 429);
-  assert.equal((await ana.investigar("Otro tema", "inventada")).status, 400);
 });
 
 test("el historial sobrevive a un reinicio del servidor y se puede borrar", async () => {
@@ -184,4 +205,26 @@ test("el historial sobrevive a un reinicio del servidor y se puede borrar", asyn
   assert.equal((await despues.eventos(conversacion)).estado, 404);
   assert.deepEqual(await (await despues.pedir("/api/conversaciones")).json(), []);
   assert.equal(await almacen.obtener(conversacion), null);
+});
+
+test("detrás de Cloudflare, el bloqueo por intentos usa CF-Connecting-IP y no el borde que cambia", async () => {
+  const { servidor, base: direccion } = await levantar({
+    acceso: crearAcceso("ana:codigo-de-ana:0"),
+    almacen: crearAlmacenMemoria(),
+    urlLLM: llmSimulado.urlBase,
+    entorno: { ...ENTORNO, CONFIAR_EN_PROXY: "1", CABECERA_IP: "cf-connecting-ip" },
+  });
+  cerrar.push(servidor);
+  const entrar = (codigo, ip, borde) =>
+    cliente(direccion).pedir("/api/entrar", {
+      metodo: "POST",
+      cuerpo: { codigo },
+      cabeceras: { "CF-Connecting-IP": ip, "X-Forwarded-For": `${ip}, 104.16.0.${borde}` },
+    });
+
+  for (let intento = 1; intento <= 8; intento++) {
+    assert.equal((await entrar("codigo-falso", "203.0.113.7", intento)).status, 401);
+  }
+  assert.equal((await entrar("codigo-de-ana", "203.0.113.7", 99)).status, 429);
+  assert.equal((await entrar("codigo-de-ana", "198.51.100.4", 1)).status, 200, "otra IP no queda bloqueada");
 });

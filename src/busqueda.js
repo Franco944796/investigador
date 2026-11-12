@@ -35,12 +35,32 @@ export function parsearDuckDuckGo(html) {
   return resultados;
 }
 
+const NO_ES_FIGURA = /logo|icon|sprite|avatar|banner|badge|button|btn|close|arrow|flag|emoji|pixel|spacer|\.gif|\.svg/i;
+
+// De las imágenes de una página (Tavily trae decenas: logos, íconos, botones) quedan como mucho 3
+// con texto alternativo descriptivo, que es lo único que dice qué muestran.
+export function figurasDe(imagenes) {
+  return (Array.isArray(imagenes) ? imagenes : [])
+    .filter(
+      (imagen) =>
+        typeof imagen?.url === "string" &&
+        imagen.url.startsWith("https://") &&
+        imagen.description_source === "alt" &&
+        typeof imagen.description === "string" &&
+        imagen.description.trim().length >= 12 &&
+        !NO_ES_FIGURA.test(imagen.url) &&
+        !NO_ES_FIGURA.test(imagen.description),
+    )
+    .slice(0, 3)
+    .map((imagen) => ({ url: imagen.url, descripcion: imagen.description.trim().slice(0, 160) }));
+}
+
 const conLimite = (signal) => AbortSignal.any([signal, AbortSignal.timeout(LIMITE_MS)].filter(Boolean));
 
 export function crearBuscador({ tavilyClave }) {
   let turnoDuckDuckGo = Promise.resolve();
 
-  async function conTavily(consulta, cantidad, signal) {
+  async function conTavily(consulta, cantidad, signal, dominios) {
     const respuesta = await fetch("https://api.tavily.com/search", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${tavilyClave}` },
@@ -51,6 +71,10 @@ export function crearBuscador({ tavilyClave }) {
         max_results: cantidad,
         search_depth: "basic",
         include_raw_content: "text",
+        // Mismo costo (1 crédito): trae las imágenes de cada resultado para los gráficos del informe.
+        include_images: true,
+        include_image_descriptions: true,
+        ...(dominios?.length && { include_domains: dominios }),
       }),
       signal: conLimite(signal),
     });
@@ -61,6 +85,7 @@ export function crearBuscador({ tavilyClave }) {
       url: resultado.url,
       resumen: resultado.content ?? "",
       contenido: (resultado.raw_content ?? "").replace(/\n{3,}/g, "\n\n").trim(),
+      imagenes: figurasDe(resultado.images),
     }));
   }
 
@@ -81,17 +106,137 @@ export function crearBuscador({ tavilyClave }) {
     return turno;
   }
 
-  return async function buscar(consulta, { cantidad, signal }) {
+  // Con `dominios`, la búsqueda se limita a esos sitios.
+  return async function buscar(consulta, { cantidad, signal, dominios }) {
     if (tavilyClave) {
       try {
-        const resultados = await conTavily(consulta, cantidad, signal);
+        const resultados = await conTavily(consulta, cantidad, signal, dominios);
         if (resultados.length) return { motor: "Tavily", resultados };
       } catch (error) {
         if (signal?.aborted) throw error;
         console.warn(`Tavily falló, se usa DuckDuckGo: ${error.message}`);
       }
     }
-    const resultados = await conDuckDuckGo(consulta, signal);
+    const sitios = dominios?.length ? ` ${dominios.map((dominio) => `site:${dominio}`).join(" OR ")}` : "";
+    const resultados = await conDuckDuckGo(consulta + sitios, signal);
     return { motor: "DuckDuckGo", resultados: resultados.slice(0, cantidad) };
+  };
+}
+
+// OpenAlex guarda el resumen como índice invertido ({palabra: [posiciones]}) por derechos de autor.
+export function resumenDe(indiceInvertido) {
+  if (!indiceInvertido) return "";
+  const palabras = [];
+  for (const [palabra, posiciones] of Object.entries(indiceInvertido)) {
+    for (const posicion of posiciones) palabras[posicion] = palabra;
+  }
+  return palabras.filter(Boolean).join(" ");
+}
+
+export function deOpenAlex(obra) {
+  const titulo = obra.display_name ?? obra.title ?? "";
+  const resumen = resumenDe(obra.abstract_inverted_index);
+  const autores = (obra.authorships ?? []).map((autoria) => autoria.author?.display_name).filter(Boolean);
+  const firma = autores.length > 3 ? `${autores.slice(0, 3).join(", ")} et al.` : autores.join(", ");
+  const revista = obra.primary_location?.source?.display_name;
+  const ficha = [
+    titulo,
+    firma,
+    [obra.publication_year, revista].filter(Boolean).join(" · "),
+    `Citas: ${obra.cited_by_count ?? 0}`,
+    resumen && `Resumen: ${resumen}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+  return {
+    titulo,
+    url: obra.doi || obra.open_access?.oa_url || obra.primary_location?.landing_page_url || obra.id,
+    resumen: ficha,
+    // Sin resumen no hay qué analizar: se intenta leer la página del artículo.
+    contenido: resumen ? ficha : "",
+  };
+}
+
+const CAMPOS_OPENALEX = [
+  "id",
+  "doi",
+  "display_name",
+  "publication_year",
+  "cited_by_count",
+  "primary_location",
+  "open_access",
+  "authorships",
+  "abstract_inverted_index",
+].join(",");
+
+async function conOpenAlex(consulta, { cantidad, signal, clave, filtro }) {
+  const url = new URL("https://api.openalex.org/works");
+  url.searchParams.set("search", consulta);
+  url.searchParams.set("per_page", String(cantidad));
+  url.searchParams.set("select", CAMPOS_OPENALEX);
+  // Sin resumen casi nunca se puede analizar: la página de la editorial suele estar cerrada.
+  url.searchParams.set("filter", ["has_abstract:true", filtro].filter(Boolean).join(","));
+  if (clave) url.searchParams.set("api_key", clave);
+  const respuesta = await fetch(url, { headers: { "User-Agent": AGENTE }, signal: conLimite(signal) });
+  if (!respuesta.ok) throw new Error(`OpenAlex respondió ${respuesta.status}`);
+  const { results = [] } = await respuesta.json();
+  return results.map(deOpenAlex);
+}
+
+// Google Scholar no tiene API y prohíbe las consultas automáticas; OpenAlex cubre lo mismo con
+// datos abiertos. Sin clave comparte un presupuesto diario chico con toda la IP de salida.
+export function crearBuscadorAcademico({ clave }) {
+  return async function buscarAcademico(consulta, { cantidad, signal }) {
+    return { motor: "OpenAlex", resultados: await conOpenAlex(consulta, { cantidad, signal, clave }) };
+  };
+}
+
+export function deGoogleBooks(volumen) {
+  const info = volumen.volumeInfo ?? {};
+  const titulo = [info.title, info.subtitle].filter(Boolean).join(": ");
+  const descripcion = (info.description ?? "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  const fragmento = (volumen.searchInfo?.textSnippet ?? "").replace(/<[^>]+>/g, "").trim();
+  const ficha = [
+    titulo,
+    (info.authors ?? []).join(", "),
+    [info.publishedDate?.slice(0, 4), info.publisher].filter(Boolean).join(" · "),
+    descripcion && `Descripción: ${descripcion}`,
+    fragmento && `Fragmento: ${fragmento}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+  return {
+    titulo,
+    url: info.canonicalVolumeLink || info.infoLink || `https://books.google.com/books?id=${volumen.id}`,
+    resumen: ficha,
+    contenido: descripcion.length >= 150 ? ficha : "",
+  };
+}
+
+// Libros: los de OpenAlex (con resumen) y, si hay clave, Google Books, que suma descripciones de
+// editorial de libros no académicos. Google Books sin clave comparte una cuota que suele estar
+// agotada (429). Open Library se descartó: su catálogo no trae texto para analizar.
+export function crearBuscadorDeLibros({ claveOpenAlex, claveGoogleBooks }) {
+  async function conGoogleBooks(consulta, cantidad, signal) {
+    const url = new URL("https://www.googleapis.com/books/v1/volumes");
+    url.searchParams.set("q", consulta);
+    url.searchParams.set("maxResults", String(Math.min(cantidad, 40)));
+    url.searchParams.set("printType", "books");
+    url.searchParams.set("key", claveGoogleBooks);
+    const respuesta = await fetch(url, { signal: conLimite(signal) });
+    if (!respuesta.ok) throw new Error(`Google Books respondió ${respuesta.status}`);
+    return ((await respuesta.json()).items ?? []).map(deGoogleBooks);
+  }
+
+  return async function buscarLibros(consulta, { cantidad, signal }) {
+    const mitad = claveGoogleBooks ? Math.ceil(cantidad / 2) : cantidad;
+    const [abiertos, google] = await Promise.allSettled([
+      conOpenAlex(consulta, { cantidad: mitad, signal, clave: claveOpenAlex, filtro: "type:book" }),
+      claveGoogleBooks ? conGoogleBooks(consulta, cantidad - mitad, signal) : Promise.resolve([]),
+    ]);
+    if (signal?.aborted) throw signal.reason;
+    if (abiertos.status === "rejected" && google.status === "rejected") throw abiertos.reason;
+    const resultados = [abiertos, google].flatMap((parte) => (parte.status === "fulfilled" ? parte.value : []));
+    return { motor: "libros", resultados };
   };
 }

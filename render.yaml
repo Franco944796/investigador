@@ -12,6 +12,9 @@ services:
         value: 0.0.0.0
       - key: CONFIAR_EN_PROXY
         value: "1"
+      # Render está detrás de Cloudflare: la IP real del visitante llega en esta cabecera.
+      - key: CABECERA_IP
+        value: cf-connecting-ip
       # La copia de la página en GitHub Pages (.github/workflows/pagina.yml) usa esta API.
       - key: ORIGENES_PERMITIDOS
         value: https://franco944796.github.io
@@ -24,9 +27,16 @@ services:
       # Cadena de conexión de Neon (Postgres): guarda el historial de investigaciones.
       - key: DATABASE_URL
         sync: false
+      # 0 = sin límite por persona (decisión de Franco); cada código puede tener el suyo.
       - key: LIMITE_DIARIO
-        value: "5"
+        value: "0"
       - key: TAVILY_CLAVE
+        sync: false
+      # Clave gratis de openalex.org (Settings → API key): buscador académico.
+      - key: OPENALEX_CLAVE
+        sync: false
+      # Clave gratis de Google Books (Google Cloud → Books API): suma libros no académicos.
+      - key: GOOGLE_BOOKS_CLAVE
         sync: false
       - key: LLM_1_URL
         value: https://integrate.api.nvidia.com/v1

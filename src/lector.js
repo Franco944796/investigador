@@ -50,14 +50,14 @@ async function exigirDestinoPublico(url) {
   }
 }
 
-async function descargar(direccion, signal) {
+async function descargar(direccion, signal, aceptar = "text/html,text/plain;q=0.8") {
   let url = new URL(direccion);
   for (let salto = 0; salto <= MAX_REDIRECCIONES; salto++) {
     await exigirDestinoPublico(url);
     const respuesta = await fetch(url, {
       redirect: "manual",
       signal,
-      headers: { "User-Agent": AGENTE, Accept: "text/html,text/plain;q=0.8" },
+      headers: { "User-Agent": AGENTE, Accept: aceptar },
     });
     const destino = respuesta.headers.get("location");
     if (respuesta.status < 300 || respuesta.status >= 400 || !destino) return respuesta;
@@ -94,6 +94,28 @@ const ordenar = (texto) =>
     .replace(/[ \t ]+/g, " ")
     .replace(/\s*\n\s*/g, "\n")
     .trim();
+
+const MAX_IMAGEN = 3 * 1024 * 1024;
+const FORMATOS_PDF = new Set(["image/png", "image/jpeg"]);
+
+// Para el PDF: devuelve la imagen como data URL. Solo PNG y JPEG, lo único que pdfmake incrusta.
+export async function descargarImagen(direccion, { signal } = {}) {
+  const respuesta = await descargar(direccion, signal, "image/png,image/jpeg;q=0.9,*/*;q=0.1");
+  if (!respuesta.ok) throw new Error(`respondió ${respuesta.status}`);
+  const tipo = (respuesta.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
+  if (!FORMATOS_PDF.has(tipo)) {
+    await respuesta.body?.cancel();
+    throw new Error(`formato ${tipo || "desconocido"}`);
+  }
+  const trozos = [];
+  let total = 0;
+  for await (const trozo of respuesta.body) {
+    total += trozo.length;
+    if (total > MAX_IMAGEN) throw new Error("imagen demasiado grande");
+    trozos.push(trozo);
+  }
+  return `data:${tipo};base64,${Buffer.concat(trozos).toString("base64")}`;
+}
 
 export function extraerTexto(html) {
   const { document } = parseHTML(html);

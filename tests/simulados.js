@@ -30,6 +30,8 @@ const PLAN_MULTILINGUE = {
     { idioma: "es", texto: "primera consulta" },
     { idioma: "en", texto: "second query" },
     { idioma: "zh", texto: "第三 查询" },
+    { idioma: "ja", texto: "全固体電池 量産 トヨタ 2027年 計画 発表" },
+    { idioma: "ko", texto: "전고체 배터리 삼성SDI 양산 일정 발표" },
   ],
 };
 
@@ -43,7 +45,26 @@ function responder(cuerpo, estado) {
   if (ultimo.includes('"idiomas"')) return JSON.stringify(PLAN_MULTILINGUE);
   if (ultimo.includes('"secciones"')) return JSON.stringify(INDICE);
   if (ultimo.includes("Te toca la sección")) {
-    return "## Comparación\n\n| Opción | Dato |\n| --- | --- |\n| A | 10 [1] |\n| B | 20 [2] |";
+    const grafico = {
+      tipo: "barras",
+      titulo: "Dato por opción",
+      unidad: "u",
+      datos: [
+        { etiqueta: "A", valor: 10, cita: 1 },
+        { etiqueta: "B", valor: 20, cita: 2 },
+      ],
+    };
+    const imagen = { tipo: "imagen", url: "https://ejemplo.invalid/plano.png", pie: "Plano de la celda", cita: 2 };
+    const mapa = {
+      tipo: "mapa",
+      titulo: "Dato por país",
+      unidad: "u",
+      datos: [
+        { pais: "ARG", valor: 10, cita: 1 },
+        { pais: "CHN", valor: 20, cita: 2 },
+      ],
+    };
+    return `## Comparación\n\n| Opción | Dato |\n| --- | --- |\n| A | 10 [1] |\n| B | 20 [2] |\n\n\`\`\`grafico\n${JSON.stringify(grafico)}\n\`\`\`\n\n\`\`\`grafico\n${JSON.stringify(mapa)}\n\`\`\`\n\n\`\`\`grafico\n${JSON.stringify(imagen)}\n\`\`\``;
   }
   if (ultimo.includes("comienzo del informe")) return "# Informe de prueba\n\n## Resumen\n\nResumen breve [1].";
   if (ultimo.includes("cierre del informe")) return "## Conclusiones\n\n- Punto **importante** [2].";

@@ -16,7 +16,8 @@ const ruta = (relativa) => fileURLToPath(new URL(relativa, import.meta.url));
 
 const POLITICA_DE_CONTENIDO = [
   "default-src 'self'",
-  "img-src 'self' data:",
+  // Las imágenes de las fuentes se muestran desde su sitio, con crédito y enlace.
+  "img-src 'self' data: https:",
   "object-src 'none'",
   "base-uri 'none'",
   "frame-ancestors 'none'",
@@ -25,6 +26,11 @@ const POLITICA_DE_CONTENIDO = [
 // Token en una cabecera y no en una cookie: la página también se publica en GitHub Pages, otro
 // sitio, y Safari bloquea las cookies entre sitios distintos.
 const leerToken = (req) => req.get("authorization")?.match(/^Bearer (.+)$/)?.[1] ?? null;
+
+// En Render, X-Forwarded-For termina con la IP del borde de Cloudflare, que cambia entre pedidos:
+// los intentos fallidos nunca se juntaban. Cloudflare reescribe CF-Connecting-IP, así que no se
+// puede falsificar desde afuera.
+const ipDe = (req, cabecera) => (cabecera && req.get(cabecera)?.trim()) || req.ip;
 
 function textoValido(valor) {
   const texto = typeof valor === "string" ? valor.trim() : "";
@@ -108,6 +114,22 @@ function aRegistro(conversacion) {
   };
 }
 
+// Resumen de la investigación (primer turno, antes de las preguntas de seguimiento).
+export function datosDeInvestigacion(eventos) {
+  const fin = eventos.findIndex((evento) => ["fin", "error", "cancelada"].includes(evento.tipo));
+  const turno = fin === -1 ? eventos : eventos.slice(0, fin + 1);
+  const de = (tipo) => turno.filter((evento) => evento.tipo === tipo);
+  const fuentes = de("fuente");
+  return {
+    busquedas: de("consulta").length,
+    idiomas: [...new Set(de("consulta").map((evento) => evento.datos.idioma).filter(Boolean))],
+    leidas: fuentes.filter((evento) => evento.datos.estado === "lista").length,
+    descartadas: fuentes.filter((evento) => evento.datos.estado === "descartada").length,
+    inicio: de("inicio")[0]?.datos.hora ?? null,
+    fin: de("fin")[0]?.datos.hora ?? null,
+  };
+}
+
 function enMemoria(conversacion, extra) {
   return Object.assign(conversacion, {
     eventos: [],
@@ -124,7 +146,7 @@ function desdeRegistro(registro) {
   return enMemoria(conversacion, { ...campos, ...datos, vistas: new Set(datos.vistas) });
 }
 
-export function crearApp({ config, acceso, investigadores, almacen, generarPDF }) {
+export function crearApp({ config, acceso, investigador, almacen, generarPDF }) {
   const opciones = config.investigacion;
   const activas = new Map();
   const cargando = new Map();
@@ -287,7 +309,7 @@ export function crearApp({ config, acceso, investigadores, almacen, generarPDF }
   const datosDeSesion = (persona) => ({ nombre: persona.nombre, uso: acceso.uso(persona) });
 
   app.post("/api/entrar", (req, res) => {
-    const { persona, token, bloqueado } = acceso.entrar(req.body?.codigo, req.ip);
+    const { persona, token, bloqueado } = acceso.entrar(req.body?.codigo, ipDe(req, config.cabeceraIp));
     if (bloqueado) {
       return res.status(429).json({ error: "Demasiados intentos. Esperá unos minutos." });
     }
@@ -302,10 +324,8 @@ export function crearApp({ config, acceso, investigadores, almacen, generarPDF }
     if (!tema) {
       return res.status(400).json({ error: `Escribí un tema de entre 3 y ${MAX_TEXTO} caracteres.` });
     }
-    const profundidad = req.body?.profundidad ?? "normal";
-    if (!Object.hasOwn(investigadores, profundidad)) {
-      return res.status(400).json({ error: "Profundidad desconocida." });
-    }
+    // Hay un solo tipo; el campo queda para distinguir las guardadas antes (normal, profunda).
+    const profundidad = "exhaustiva";
     if (!acceso.puedeInvestigar(req.persona)) {
       return res.status(429).json({
         error: `Ya usaste tus ${req.persona.limite} investigaciones de hoy. Mañana se renuevan.`,
@@ -324,7 +344,7 @@ export function crearApp({ config, acceso, investigadores, almacen, generarPDF }
     lanzar(
       conversacion,
       req.persona,
-      (flujo) => investigadores[profundidad].investigar(conversacion, flujo),
+      (flujo) => investigador.investigar(conversacion, flujo),
       { esInvestigacion: true },
     );
     guardar(conversacion);
@@ -378,7 +398,6 @@ export function crearApp({ config, acceso, investigadores, almacen, generarPDF }
         error: "Este informe llegó al máximo de preguntas. Empezá una investigación nueva.",
       });
     }
-    const investigador = investigadores[conversacion.profundidad] ?? investigadores.normal;
     registrar(conversacion, "pregunta", { texto: pregunta });
     lanzar(
       conversacion,
@@ -428,6 +447,24 @@ export function crearApp({ config, acceso, investigadores, almacen, generarPDF }
         "Content-Disposition": `attachment; filename="${nombreDeArchivo(conversacion.tema)}"`,
       })
       .send(pdf);
+  });
+
+  app.get("/api/conversaciones/:id/informe", exigirSesion, async (req, res) => {
+    const conversacion = await cargar(req, res, req.params.id);
+    if (!conversacion) return;
+    if (!conversacion.informe) {
+      return res.status(409).json({ error: "El informe todavía no está terminado." });
+    }
+    res.json({
+      titulo: tituloDelPedido(conversacion.tema),
+      tema: conversacion.tema,
+      creada: conversacion.creada,
+      archivo: nombreDeArchivo(conversacion.tema).replace(/\.pdf$/, ""),
+      informe: conversacion.informe,
+      fuentes: conversacion.fuentes.map(({ n, url, titulo }) => ({ n, url, titulo })),
+      intercambios: conversacion.intercambios,
+      datos: datosDeInvestigacion(conversacion.eventos),
+    });
   });
 
   app.use((error, req, res, next) => {

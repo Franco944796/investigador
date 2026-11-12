@@ -13,24 +13,19 @@ const demoraMs = Number(process.env.DEMORA_MS ?? 600);
 const llmSimulado = await iniciarLLMSimulado({ demoraMs });
 const config = leerConfig({
   PUERTO: process.env.PUERTO ?? "3211",
-  CONSULTAS_INICIALES: "2",
+  CONSULTAS_INICIALES: process.env.CONSULTAS_INICIALES ?? "2",
   ORIGENES_PERMITIDOS: process.env.ORIGENES_PERMITIDOS,
 });
 const llm = crearLLM([{ urlBase: llmSimulado.urlBase, clave: "", modelo: "auto" }], { esperas: [300] });
-const investigadores = Object.fromEntries(
-  Object.entries(config.profundidades).map(([nombre, perfil]) => [
-    nombre,
-    crearInvestigador({
-      llm,
-      buscar: buscarSimulado,
-      leerPagina: crearLectorSimulado({ demoraMs }),
-      opciones: { ...config.investigacion, ...perfil, consultasIniciales: 2 },
-    }),
-  ]),
-);
+const investigador = crearInvestigador({
+  llm,
+  buscar: buscarSimulado,
+  leerPagina: crearLectorSimulado({ demoraMs }),
+  opciones: config.investigacion,
+});
 const almacen = crearAlmacenMemoria();
 
-crearApp({ config, acceso: crearAcceso("prueba:codigo-de-prueba:5"), investigadores, almacen, generarPDF })
+crearApp({ config, acceso: crearAcceso("prueba:codigo-de-prueba:5"), investigador, almacen, generarPDF })
   .listen(config.puerto, "127.0.0.1", () => {
     console.log(`Simulación en http://127.0.0.1:${config.puerto} (código: codigo-de-prueba)`);
   });

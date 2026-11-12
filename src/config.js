@@ -36,36 +36,6 @@ function leerProveedores(env) {
 
 // Normal se ajusta por variables de entorno; las otras dos son fijas. Una ronda extra suma
 // `consultasPorRonda` búsquedas: Exhaustiva gasta ~45 de las 1.000 mensuales de Tavily.
-function leerProfundidades(env) {
-  return {
-    normal: {
-      consultasIniciales: entero(env, "CONSULTAS_INICIALES", 5),
-      resultadosPorConsulta: entero(env, "RESULTADOS_POR_CONSULTA", 4),
-      rondasExtra: entero(env, "RONDAS_EXTRA", 2),
-      consultasPorRonda: entero(env, "CONSULTAS_POR_RONDA", 3),
-      maxFuentes: entero(env, "MAX_FUENTES", 24),
-    },
-    profunda: {
-      consultasIniciales: 8,
-      resultadosPorConsulta: 5,
-      rondasExtra: 4,
-      consultasPorRonda: 4,
-      maxFuentes: 50,
-    },
-    // Hasta 25 + 9 × 8 = 97 búsquedas de Tavily (se cobra por búsqueda, no por resultado).
-    exhaustiva: {
-      consultasIniciales: 25,
-      resultadosPorConsulta: 8,
-      rondasExtra: 9,
-      consultasPorRonda: 8,
-      maxFuentes: 300,
-      multilingue: true,
-      informePorSecciones: true,
-      irrelevantesSeguidas: 15,
-    },
-  };
-}
-
 export function leerConfig(env = process.env) {
   return {
     baseDeDatos: env.DATABASE_URL || "",
@@ -76,28 +46,39 @@ export function leerConfig(env = process.env) {
       .split(",")
       .map((origen) => origen.trim().replace(/\/+$/, "").toLowerCase())
       .filter(Boolean),
-    profundidades: leerProfundidades(env),
     // PORT es el nombre que imponen los hostings (Render entre ellos).
     puerto: entero(env, "PUERTO", entero(env, "PORT", 3210)),
     host: env.HOST || "127.0.0.1",
     // Cantidad de proxies inversos delante del servidor (0 = ninguno).
     confiarEnProxy: entero(env, "CONFIAR_EN_PROXY", 0),
+    // Cabecera con la IP del visitante que pone un proxy de confianza (en Render, Cloudflare).
+    cabeceraIp: (env.CABECERA_IP || "").trim().toLowerCase(),
     proveedores: leerProveedores(env),
     limiteLLMMs: entero(env, "LLM_LIMITE_MINUTOS", 30) * 60 * 1000,
     tavilyClave: env.TAVILY_CLAVE || "",
+    openalexClave: env.OPENALEX_CLAVE || "",
+    googleBooksClave: env.GOOGLE_BOOKS_CLAVE || "",
     acceso: {
       codigos: env.CODIGOS_ACCESO || "",
-      limiteDiario: entero(env, "LIMITE_DIARIO", 5),
+      limiteDiario: entero(env, "LIMITE_DIARIO", 0),
       secreto: env.SECRETO_SESION || "",
       carpetaDatos: env.CARPETA_DATOS || "datos",
     },
+    // Un solo tipo de investigación: exhaustiva. Tavily cobra por búsqueda (1 crédito la básica),
+    // no por resultado ni por fuente: el tope es de búsquedas y las fuentes no tienen límite.
     investigacion: {
-      consultasIniciales: entero(env, "CONSULTAS_INICIALES", 5),
-      resultadosPorConsulta: entero(env, "RESULTADOS_POR_CONSULTA", 4),
-      rondasExtra: entero(env, "RONDAS_EXTRA", 2),
-      consultasPorRonda: entero(env, "CONSULTAS_POR_RONDA", 3),
-      maxFuentes: entero(env, "MAX_FUENTES", 24),
-      fuentesPorSeguimiento: entero(env, "FUENTES_POR_SEGUIMIENTO", 6),
+      consultasIniciales: entero(env, "CONSULTAS_INICIALES", 25),
+      resultadosPorConsulta: entero(env, "RESULTADOS_POR_CONSULTA", 8),
+      // Las rondas sobran: lo que corta es maxBusquedas.
+      rondasExtra: entero(env, "RONDAS_EXTRA", 20),
+      consultasPorRonda: entero(env, "CONSULTAS_POR_RONDA", 8),
+      maxBusquedas: entero(env, "MAX_BUSQUEDAS", 100),
+      // 0 = sin tope.
+      maxFuentes: entero(env, "MAX_FUENTES", 0) || Infinity,
+      multilingue: true,
+      informePorSecciones: true,
+      irrelevantesSeguidas: entero(env, "IRRELEVANTES_SEGUIDAS", 20),
+      fuentesPorSeguimiento: entero(env, "FUENTES_POR_SEGUIMIENTO", 24),
       caracteresPorFuente: entero(env, "CARACTERES_POR_FUENTE", 7000),
       tareasEnParalelo: entero(env, "TAREAS_EN_PARALELO", 3),
       simultaneas: entero(env, "INVESTIGACIONES_SIMULTANEAS", 2),

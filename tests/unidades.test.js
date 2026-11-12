@@ -4,7 +4,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { Acceso, parsearCodigos } from "../src/acceso.js";
-import { parsearDuckDuckGo } from "../src/busqueda.js";
+import {
+  crearBuscador,
+  crearBuscadorDeLibros,
+  deGoogleBooks,
+  deOpenAlex,
+  parsearDuckDuckGo,
+  resumenDe,
+} from "../src/busqueda.js";
+import { destinosDe } from "../src/investigador.js";
 import { listaDeFuentes, normalizarUrl } from "../src/investigador.js";
 import { esDireccionPrivada, extraerTexto } from "../src/lector.js";
 import { ErrorFormato, extraerJSON, quitarPensamiento } from "../src/llm.js";
@@ -173,4 +181,109 @@ test("PDF: con la plantilla, la línea Pregunta da el título y el nombre del ar
   assert.equal(nombreDeArchivo(pedido), "conviene-la-energia-solar.pdf");
   assert.equal(tituloDelPedido("Pregunta:\nContexto: algo"), "Pregunta:\nContexto: algo");
   assert.equal(tituloDelPedido("Tema libre sin plantilla"), "Tema libre sin plantilla");
+});
+
+test("destinos: sitios y pedido académico salen del campo Fuentes", () => {
+  const pedido = `Pregunta: ¿Sirve Node.js para esto?
+Fuentes: https://www.who.int/es/temas, argentina.gob.ar; Google Scholar y papers recientes`;
+  assert.deepEqual(destinosDe(pedido, ["CEPAL.org", "no es dominio", "scholar.google.com"]), {
+    dominios: ["who.int", "argentina.gob.ar", "cepal.org"],
+    academico: true,
+    libros: false,
+  });
+  assert.deepEqual(destinosDe("Pregunta: costos\nFuentes: oficiales"), {
+    dominios: [],
+    academico: false,
+    libros: false,
+  });
+  assert.deepEqual(destinosDe("Buscá en arxiv.org sobre Node.js"), {
+    dominios: ["arxiv.org"],
+    academico: false,
+    libros: false,
+  });
+  assert.equal(destinosDe("Fuentes: libros y bibliotecas nacionales").libros, true);
+});
+
+test("OpenAlex: arma la ficha con el resumen reconstruido y sin resumen no da contenido", () => {
+  assert.equal(resumenDe({ baterías: [0, 3], sólidas: [1], mejores: [2] }), "baterías sólidas mejores baterías");
+  const obra = {
+    id: "https://openalex.org/W1",
+    doi: "https://doi.org/10.1/x",
+    display_name: "Solid-state batteries",
+    publication_year: 2025,
+    cited_by_count: 12,
+    primary_location: { source: { display_name: "Nature Energy" } },
+    authorships: ["A", "B", "C", "D"].map((nombre) => ({ author: { display_name: nombre } })),
+    abstract_inverted_index: { Dense: [0], cells: [1] },
+  };
+  assert.deepEqual(deOpenAlex(obra), {
+    titulo: "Solid-state batteries",
+    url: "https://doi.org/10.1/x",
+    resumen: "Solid-state batteries\nA, B, C et al.\n2025 · Nature Energy\nCitas: 12\nResumen: Dense cells",
+    contenido: "Solid-state batteries\nA, B, C et al.\n2025 · Nature Energy\nCitas: 12\nResumen: Dense cells",
+  });
+  assert.equal(deOpenAlex({ ...obra, abstract_inverted_index: null }).contenido, "");
+});
+
+test("Tavily recibe los dominios cuando la búsqueda va a sitios", async () => {
+  const original = globalThis.fetch;
+  const cuerpos = [];
+  globalThis.fetch = async (url, opciones) => {
+    cuerpos.push(JSON.parse(opciones.body));
+    return new Response(JSON.stringify({ results: [{ title: "t", url: "https://who.int/a" }] }));
+  };
+  try {
+    const buscar = crearBuscador({ tavilyClave: "clave" });
+    await buscar("malaria", { cantidad: 3, dominios: ["who.int"] });
+    await buscar("malaria", { cantidad: 3 });
+  } finally {
+    globalThis.fetch = original;
+  }
+  assert.deepEqual(cuerpos[0].include_domains, ["who.int"]);
+  assert.equal("include_domains" in cuerpos[1], false);
+});
+
+test("Google Books: la ficha usa descripción y fragmento sin HTML; sin descripción no da contenido", () => {
+  const volumen = {
+    id: "abc",
+    volumeInfo: {
+      title: "Historia",
+      subtitle: "del peronismo",
+      authors: ["Ana", "Beto"],
+      publishedDate: "1999-05-01",
+      publisher: "Sudamericana",
+      description: `<p>${"Un recorrido amplio. ".repeat(10)}</p>`,
+      canonicalVolumeLink: "https://books.google.com/books/about/x?id=abc",
+    },
+    searchInfo: { textSnippet: "el <b>17 de octubre</b>" },
+  };
+  const ficha = deGoogleBooks(volumen);
+  assert.equal(ficha.titulo, "Historia: del peronismo");
+  assert.equal(ficha.url, "https://books.google.com/books/about/x?id=abc");
+  assert.match(ficha.contenido, /^Historia: del peronismo\nAna, Beto\n1999 · Sudamericana\nDescripción: Un recorrido/);
+  assert.match(ficha.contenido, /Fragmento: el 17 de octubre$/);
+  assert.equal(deGoogleBooks({ id: "x", volumeInfo: { title: "Corto" } }).contenido, "");
+});
+
+test("libros: OpenAlex filtra solo libros con resumen; si Google Books falla, quedan los de OpenAlex", async () => {
+  const original = globalThis.fetch;
+  const pedidos = [];
+  globalThis.fetch = async (url) => {
+    pedidos.push(String(url));
+    if (String(url).includes("googleapis")) return new Response("{}", { status: 429 });
+    const obra = { id: "W1", display_name: "Libro", abstract_inverted_index: { Texto: [0] } };
+    return new Response(JSON.stringify({ results: [obra] }));
+  };
+  let resultado;
+  try {
+    const buscarLibros = crearBuscadorDeLibros({ claveOpenAlex: "", claveGoogleBooks: "clave" });
+    resultado = await buscarLibros("peronismo", { cantidad: 8 });
+  } finally {
+    globalThis.fetch = original;
+  }
+  const openAlex = new URL(pedidos.find((url) => url.includes("openalex")));
+  assert.equal(openAlex.searchParams.get("filter"), "has_abstract:true,type:book");
+  assert.equal(openAlex.searchParams.get("per_page"), "4");
+  assert.ok(pedidos.some((url) => url.includes("googleapis") && url.includes("maxResults=4")));
+  assert.deepEqual(resultado.resultados.map((libro) => libro.titulo), ["Libro"]);
 });

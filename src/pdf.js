@@ -1,7 +1,10 @@
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import * as fontkit from "fontkit";
 import { marked } from "marked";
 import pdfmake from "pdfmake";
+import { dibujarGrafico, imagenDe, tipoDeGrafico } from "../public/graficos.js";
+import { descargarImagen } from "./lector.js";
 
 const AZUL = "#1a56b0";
 const ANCHO_UTIL = 483;
@@ -116,7 +119,7 @@ const lineasHorizontales = (relleno) => ({
   paddingRight: (i, nodo) => (i === nodo.table.widths.length - 1 ? 0 : relleno),
 });
 
-function bloques(tokens, urls) {
+function bloques(tokens, urls, imagenes = new Map()) {
   return tokens.flatMap((token) => {
     switch (token.type) {
       case "heading":
@@ -126,13 +129,14 @@ function bloques(tokens, urls) {
       case "text":
         return [{ text: tramos(token.tokens ?? [token], {}, urls) }];
       case "list": {
-        const items = token.items.map((item) => ({ stack: bloques(item.tokens, urls) }));
+        const items = token.items.map((item) => ({ stack: bloques(item.tokens, urls, imagenes) }));
         const margin = [0, 0, 0, 8];
         return [token.ordered ? { ol: items, start: Number(token.start) || 1, margin } : { ul: items, margin }];
       }
       case "blockquote":
-        return [{ stack: bloques(token.tokens, urls), style: "cita" }];
+        return [{ stack: bloques(token.tokens, urls, imagenes), style: "cita" }];
       case "code":
+        if (token.lang === "grafico") return bloqueDeGrafico(token.text, urls, imagenes);
         return [
           {
             table: { widths: ["*"], body: [[{ text: token.text, style: "codigo" }]] },
@@ -178,8 +182,87 @@ function bloques(tokens, urls) {
   });
 }
 
-export function generarPDF({ titulo, markdown, fuentes }) {
+let geografia = null;
+const mapa = () =>
+  (geografia ??= JSON.parse(readFileSync(new URL("../public/mapa.json", import.meta.url), "utf8")));
+
+function codigosDeGrafico(tokens, lista = []) {
+  for (const token of tokens ?? []) {
+    if (token.type === "code" && token.lang === "grafico") lista.push(token.text);
+    codigosDeGrafico(token.tokens, lista);
+    codigosDeGrafico(token.items, lista);
+  }
+  return lista;
+}
+
+const sitioDe = (url) => {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return url;
+  }
+};
+
+function pieDeGrafico(titulo, citas, urls, detalle = []) {
+  const enlaces = citas.flatMap((n) => [{ text: `[${n}]`, link: urls.get(n), color: AZUL }, " "]);
+  return {
+    text: [
+      { text: titulo, bold: true },
+      ...(detalle.length ? [` — ${detalle.join("; ")}`] : []),
+      ...(enlaces.length ? [" — Fuentes: ", ...enlaces] : []),
+    ],
+    fontSize: 8.5,
+    color: "#555555",
+    margin: [0, 3, 0, 12],
+  };
+}
+
+// Las imágenes de las fuentes se bajan antes de armar el PDF; si no se puede (derechos, bloqueo,
+// formato), queda el aviso con el enlace para verla en su sitio.
+function bloqueDeGrafico(texto, urls, imagenes) {
+  const imagen = imagenDe(texto);
+  if (imagen) {
+    const datos = imagenes.get(imagen.url);
+    const pie = pieDeGrafico(imagen.pie || "Imagen", imagen.cita ? [imagen.cita] : [], urls, [
+      `imagen de ${sitioDe(imagen.url)}`,
+    ]);
+    if (datos) return [{ image: datos, fit: [ANCHO_UTIL, 330], alignment: "center", margin: [0, 6, 0, 0] }, pie];
+    return [
+      {
+        text: [
+          "Imagen no disponible en el PDF (por derechos de autor o porque el sitio no permite mostrarla): ",
+          { text: `verla en ${sitioDe(imagen.url)}`, link: imagen.url, color: AZUL },
+        ],
+        italics: true,
+        fontSize: 9,
+        margin: [0, 6, 0, 0],
+      },
+      pie,
+    ];
+  }
+  const grafico = dibujarGrafico(texto, {
+    tema: "claro",
+    geografia: tipoDeGrafico(texto) === "mapa" ? mapa() : null,
+  });
+  if (!grafico) return [];
+  return [
+    { svg: grafico.svg, width: ANCHO_UTIL, margin: [0, 8, 0, 0] },
+    pieDeGrafico(grafico.titulo, grafico.citas, urls, grafico.detalle),
+  ];
+}
+
+export async function generarPDF({ titulo, markdown, fuentes }) {
   const urls = new Map(fuentes.map((fuente) => [fuente.n, fuente.url]));
+  const tokens = marked.lexer(aptoParaPDF(markdown));
+  const direcciones = codigosDeGrafico(tokens).map((texto) => imagenDe(texto)?.url).filter(Boolean);
+  const imagenes = new Map(
+    await Promise.all(
+      [...new Set(direcciones)].map(async (url) => [
+        url,
+        await descargarImagen(url, { signal: AbortSignal.timeout(15000) }).catch(() => null),
+      ]),
+    ),
+  );
   const fecha = new Date().toLocaleDateString("es-AR");
   return pdfmake
     .createPdf({
@@ -194,7 +277,7 @@ export function generarPDF({ titulo, markdown, fuentes }) {
         color: "#777777",
         margin: [0, 24, 0, 0],
       }),
-      content: bloques(marked.lexer(aptoParaPDF(markdown)), urls),
+      content: bloques(tokens, urls, imagenes),
       styles: {
         h1: { fontSize: 20, bold: true, lineHeight: 1.15, margin: [0, 0, 0, 12] },
         h2: { fontSize: 14, bold: true, margin: [0, 12, 0, 6] },

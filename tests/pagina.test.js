@@ -12,13 +12,15 @@ test("la copia para GitHub Pages apunta a la API, limita conexiones y trae las l
   const destino = join(mkdtempSync(join(tmpdir(), "pagina-")), "sitio");
   assert.equal(armarPagina(destino, `${API}/`), API);
 
-  const html = readFileSync(join(destino, "index.html"), "utf8");
-  assert.ok(html.includes(`<meta name="api" content="${API}" />`));
-  const politica = html.match(/http-equiv="Content-Security-Policy" content="([^"]+)"/)[1];
-  assert.ok(politica.includes(`connect-src 'self' ${API};`));
-  assert.ok(!html.includes('<meta name="api" content="" />'));
+  for (const pagina of ["index.html", "informe.html"]) {
+    const html = readFileSync(join(destino, pagina), "utf8");
+    assert.ok(html.includes(`<meta name="api" content="${API}" />`), pagina);
+    const politica = html.match(/http-equiv="Content-Security-Policy" content="([^"]+)"/)[1];
+    assert.ok(politica.includes(`connect-src 'self' ${API};`), pagina);
+    assert.ok(!html.includes('<meta name="api" content="" />'), pagina);
+  }
   for (const [nombre, archivo] of Object.entries(VENDOR)) {
     assert.deepEqual(readFileSync(join(destino, "vendor", nombre)), readFileSync(archivo));
   }
-  assert.ok(readFileSync(join(destino, "app.js"), "utf8").includes('meta[name="api"]'));
+  assert.ok(readFileSync(join(destino, "comun.js"), "utf8").includes('meta[name="api"]'));
 });

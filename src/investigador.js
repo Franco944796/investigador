@@ -79,6 +79,58 @@ export function idiomasDe(valor, consultas) {
   return idiomas;
 }
 
+// Google Scholar no se puede consultar: estas pistas activan el buscador académico (OpenAlex).
+const ACADEMICO =
+  /scholar|openalex|acad[eé]mic|cient[ií]fic|\bpapers?\b|\bjournals?\b|revistas? (cient|indexad|acad)|peer[\s-]?review/i;
+const LIBROS = /\blibros?\b|bibliotecas?|bibliograf[ií]a|monograf[ií]as?|\bbooks?\b/i;
+const NO_SON_DOMINIOS = new Set(["js", "ts", "py", "md", "txt", "pdf", "html", "css", "json", "csv"]);
+const MAX_DOMINIOS = 10;
+
+// Sitios y fuentes académicas que pide el campo «Fuentes» (o todo el pedido, si no lo usa).
+// `sugeridos` son los dominios que el modelo dedujo de nombres («la OMS» → who.int).
+export function destinosDe(tema, sugeridos = []) {
+  const texto = tema.match(/^\s*fuentes\s*:(.*)$/im)?.[1] ?? tema;
+  const dominios = new Set();
+  const agregar = (valor) => {
+    const dominio = String(valor)
+      .trim()
+      .toLowerCase()
+      .replace(/^https?:\/\//, "")
+      .replace(/^www\./, "")
+      .split(/[/?#\s,;:)\]]/)[0];
+    if (!/^([a-z0-9-]+\.)+[a-z]{2,}$/.test(dominio)) return;
+    if (NO_SON_DOMINIOS.has(dominio.split(".").at(-1)) || /(^|\.)scholar\.google\./.test(dominio)) return;
+    dominios.add(dominio);
+  };
+  for (const [encontrado] of texto.matchAll(/(?:https?:\/\/)?(?:[a-z0-9-]+\.)+[a-z]{2,}\S*/gi)) {
+    agregar(encontrado);
+  }
+  for (const sugerido of Array.isArray(sugeridos) ? sugeridos : []) agregar(sugerido);
+  return {
+    dominios: [...dominios].slice(0, MAX_DOMINIOS),
+    academico: ACADEMICO.test(texto),
+    libros: LIBROS.test(texto),
+  };
+}
+
+const activos = ({ academico, dominios, libros }) =>
+  [academico && "academico", dominios.length && "sitios", libros && "libros"].filter(Boolean);
+
+const describirDestinos = ({ academico, dominios, libros }) =>
+  [
+    academico && "artículos académicos (OpenAlex, en lugar de Google Scholar)",
+    libros && "libros",
+    ...dominios,
+  ]
+    .filter(Boolean)
+    .join(", ");
+
+// Con varios destinos (académico, sitios, libros), las consultas dirigidas se turnan entre ellos.
+const conDestino = (consultas, destinos) => {
+  const lista = activos(destinos);
+  return consultas.map((consulta, indice) => ({ ...consulta, destino: lista[indice % lista.length] }));
+};
+
 const MAX_POR_SECCION = 40;
 
 // Normaliza el índice que propone el modelo. Las fuentes que no quedaron en ninguna sección van a
@@ -118,7 +170,10 @@ const nombresDe = (idiomas) => {
 // No se usa una lista numerada de Markdown: renumera 1, 2, 3… y los números dejarían de
 // coincidir con las citas del texto.
 export function listaDeFuentes(fuentes, cuerpo) {
-  const citadas = new Set([...cuerpo.matchAll(/\[(\d+)\]/g)].map((cita) => Number(cita[1])));
+  // También cuentan las citas de los gráficos ("cita": n dentro de los bloques ```grafico).
+  const citadas = new Set(
+    [...cuerpo.matchAll(/\[(\d+)\]|"cita"\s*:\s*(\d+)/g)].map((cita) => Number(cita[1] ?? cita[2])),
+  );
   const usadas = fuentes.filter((fuente) => citadas.has(fuente.n));
   const lineas = (usadas.length ? usadas : fuentes).map((fuente) => {
     const titulo = fuente.titulo.replace(/[[\]]/g, " ").replace(/\s+/g, " ").trim() || fuente.url;
@@ -146,7 +201,14 @@ export function crearConversacion(id, dueno, tema) {
   };
 }
 
-export function crearInvestigador({ llm, buscar, leerPagina, opciones }) {
+export function crearInvestigador({
+  llm,
+  buscar,
+  buscarAcademico,
+  buscarLibros,
+  leerPagina,
+  opciones,
+}) {
   async function obtenerTexto(candidata, signal) {
     const maximo = opciones.caracteresPorFuente;
     if (candidata.contenido?.length >= MINIMO_CONTENIDO) {
@@ -162,7 +224,13 @@ export function crearInvestigador({ llm, buscar, leerPagina, opciones }) {
 
   async function analizar(conversacion, candidata, { emitir, signal, alEsperar }) {
     const id = ++conversacion.candidatas;
-    emitir("fuente", { id, url: candidata.url, titulo: candidata.titulo, estado: "leyendo" });
+    emitir("fuente", {
+      id,
+      url: candidata.url,
+      titulo: candidata.titulo,
+      estado: "leyendo",
+      ...(candidata.consulta && { consulta: candidata.consulta }),
+    });
     try {
       const pagina = await obtenerTexto(candidata, signal);
       const titulo = pagina.titulo || candidata.titulo || candidata.url;
@@ -184,6 +252,7 @@ export function crearInvestigador({ llm, buscar, leerPagina, opciones }) {
 
       conversacion.irrelevantesSeguidas = 0;
       const fuente = { n: conversacion.fuentes.length + 1, url: candidata.url, titulo, notas };
+      if (candidata.imagenes?.length) fuente.imagenes = candidata.imagenes;
       conversacion.fuentes.push(fuente);
       emitir("fuente", { id, url: fuente.url, titulo, estado: "lista", n: fuente.n });
     } catch (error) {
@@ -200,14 +269,22 @@ export function crearInvestigador({ llm, buscar, leerPagina, opciones }) {
   async function incorporar(conversacion, consultas, contexto, cupo) {
     const { emitir, signal } = contexto;
     const porConsulta = [];
-    await enParalelo(consultas, opciones.tareasEnParalelo, async ({ texto, idioma }, indice) => {
-      emitir("consulta", idioma ? { texto, idioma } : { texto });
-      conversacion.consultas.push(texto);
+    const numeros = [];
+    await enParalelo(consultas, opciones.tareasEnParalelo, async (consulta, indice) => {
+      const { texto, idioma, destino } = consulta;
+      // El número permite que la página cuelgue cada fuente de la búsqueda que la trajo.
+      const numero = conversacion.consultas.push(texto);
+      numeros[indice] = numero;
+      emitir("consulta", { id: numero, texto, ...(idioma && { idioma }), ...(destino && { destino }) });
+      const pedido = { cantidad: opciones.resultadosPorConsulta, signal };
       try {
-        const { resultados } = await buscar(texto, {
-          cantidad: opciones.resultadosPorConsulta,
-          signal,
-        });
+        const especial = { academico: buscarAcademico, libros: buscarLibros }[destino];
+        const { resultados } = especial
+          ? await especial(texto, pedido)
+          : await buscar(texto, {
+              ...pedido,
+              ...(destino === "sitios" && { dominios: conversacion.destinos.dominios }),
+            });
         porConsulta[indice] = resultados;
       } catch (error) {
         if (signal.aborted) throw error;
@@ -218,18 +295,21 @@ export function crearInvestigador({ llm, buscar, leerPagina, opciones }) {
 
     // Se intercalan para que todas las consultas aporten fuentes antes de llegar al tope.
     const candidatas = [];
+    let nuevasDirigidas = 0;
     for (let puesto = 0; puesto < opciones.resultadosPorConsulta; puesto++) {
-      for (const resultados of porConsulta) {
+      for (const [indice, resultados] of porConsulta.entries()) {
         const resultado = resultados[puesto];
         const clave = resultado && normalizarUrl(resultado.url);
         if (!clave || conversacion.vistas.has(clave) || candidatas.length >= cupo) continue;
         conversacion.vistas.add(clave);
-        candidatas.push(resultado);
+        candidatas.push({ ...resultado, consulta: numeros[indice] });
+        if (consultas[indice].destino) nuevasDirigidas++;
       }
     }
     await enParalelo(candidatas, opciones.tareasEnParalelo, async (candidata) => {
       if (!agotada(conversacion)) await analizar(conversacion, candidata, contexto);
     });
+    return { dirigidas: consultas.filter((consulta) => consulta.destino).length, nuevasDirigidas };
   }
 
   const contextoDe = ({ emitir, signal }) => ({
@@ -242,52 +322,110 @@ export function crearInvestigador({ llm, buscar, leerPagina, opciones }) {
     const contexto = contextoDe(flujo);
     const { emitir } = contexto;
     const cupo = () => opciones.maxFuentes - conversacion.fuentes.length;
+    const busquedasRestantes = () =>
+      (opciones.maxBusquedas ?? Infinity) - conversacion.consultas.length;
+
+    // La mitad de las búsquedas puede ir a los sitios pedidos, al buscador académico o a libros
+    // (solo libros: una cuarta parte); si dejan de traer resultados nuevos, lo que queda va a la web.
+    const total = opciones.maxBusquedas ?? opciones.consultasIniciales * 2;
+    let dirigidasHechas = 0;
+    const dirigidasRestantes = () => {
+      const lista = activos(conversacion.destinos);
+      if (!lista.length || conversacion.destinos.agotados) return 0;
+      const tope = Math.floor(total / (lista.length === 1 && lista[0] === "libros" ? 4 : 2));
+      return tope - dirigidasHechas;
+    };
+    const parteDirigida = () =>
+      activos(conversacion.destinos).join() === "libros" ? "Una cuarta parte" : "La mitad";
+    const reparto = (cantidad) => {
+      const solo = activos(conversacion.destinos).join() === "libros";
+      const parte = Math.floor(cantidad / (solo ? 4 : 2));
+      const dirigidas = Math.min(parte, Math.max(0, dirigidasRestantes()));
+      return { web: cantidad - dirigidas, dirigidas };
+    };
+    const filtrar = (lista, maximo) =>
+      consultasDe(lista)
+        .filter((consulta) => !conversacion.consultas.includes(consulta.texto))
+        .slice(0, maximo);
+    const buscarTanda = async (web, dirigidas) => {
+      const tanda = [...web, ...conDestino(dirigidas, conversacion.destinos)];
+      const resultado = await incorporar(conversacion, tanda, contexto, cupo());
+      dirigidasHechas += resultado.dirigidas;
+      if (resultado.dirigidas && !resultado.nuevasDirigidas && !conversacion.destinos.agotados) {
+        conversacion.destinos.agotados = true;
+        emitir("aviso", {
+          texto: "Los sitios indicados ya no traen resultados nuevos: sigo buscando en toda la web.",
+        });
+      }
+    };
 
     emitir("etapa", { texto: "Planificando la investigación" });
-    let consultas = [];
     conversacion.irrelevantesSeguidas = 0;
+    conversacion.destinos = destinosDe(conversacion.tema);
+    let web = [];
+    let dirigidas = [];
+    const iniciales = Math.min(opciones.consultasIniciales, busquedasRestantes());
     try {
       const plan = await llm.completarJSON(
-        promptPlan(conversacion.tema, opciones.consultasIniciales, {
-          multilingue: opciones.multilingue,
-        }),
+        promptPlan(conversacion.tema, iniciales, { multilingue: opciones.multilingue }),
         contexto,
       );
-      consultas = consultasDe(plan.consultas).slice(0, opciones.consultasIniciales);
-      if (opciones.multilingue) conversacion.idiomas = idiomasDe(plan.idiomas, consultas);
+      conversacion.destinos = destinosDe(conversacion.tema, plan.sitios);
+      if (plan.academico === true) conversacion.destinos.academico = true;
+      if (plan.libros === true) conversacion.destinos.libros = true;
+      const todas = consultasDe([...(plan.consultas ?? []), ...(plan.dirigidas ?? [])]);
+      if (opciones.multilingue) conversacion.idiomas = idiomasDe(plan.idiomas, todas);
+      const cupos = reparto(iniciales);
+      web = filtrar(plan.consultas, cupos.web);
+      dirigidas = filtrar(plan.dirigidas, cupos.dirigidas);
+      // Si el modelo no separó las dirigidas, salen de sus propias consultas.
+      if (cupos.dirigidas && !dirigidas.length) {
+        dirigidas = filtrar(plan.consultas, iniciales).slice(cupos.web, iniciales);
+      }
+      if (!cupos.dirigidas) web = filtrar([...(plan.consultas ?? []), ...(plan.dirigidas ?? [])], iniciales);
     } catch (error) {
       if (!(error instanceof ErrorFormato)) throw error;
     }
-    if (!consultas.length) consultas = [{ texto: conversacion.tema }];
+    if (!web.length && !dirigidas.length) web = [{ texto: conversacion.tema }];
 
     const idiomas =
       conversacion.idiomas?.length > 1 ? ` en ${nombresDe(conversacion.idiomas)}` : "";
     emitir("etapa", { texto: `Buscando y leyendo fuentes${idiomas}` });
-    await incorporar(conversacion, consultas, contexto, cupo());
+    if (dirigidasRestantes() > 0) {
+      emitir("aviso", {
+        texto: `${parteDirigida()} de las búsquedas va a: ${describirDestinos(conversacion.destinos)}.`,
+      });
+    }
+    await buscarTanda(web, dirigidas);
 
     for (let ronda = 1; ronda <= opciones.rondasExtra && cupo() > 0; ronda++) {
-      if (!conversacion.fuentes.length || agotada(conversacion)) break;
+      if (!conversacion.fuentes.length || agotada(conversacion) || busquedasRestantes() <= 0) break;
+      const cupos = reparto(Math.min(opciones.consultasPorRonda, busquedasRestantes()));
       emitir("etapa", { texto: "Revisando qué falta cubrir" });
-      let nuevas = [];
+      let nuevasWeb = [];
+      let nuevasDirigidas = [];
       try {
         const revision = await llm.completarJSON(
-          promptRevision(conversacion, opciones.consultasPorRonda),
+          promptRevision(conversacion, cupos.web, cupos.dirigidas),
           contexto,
         );
         if (revision.completo !== true) {
-          nuevas = consultasDe(revision.consultas)
-            .filter((consulta) => !conversacion.consultas.includes(consulta.texto))
-            .slice(0, opciones.consultasPorRonda);
+          nuevasWeb = filtrar(revision.consultas, cupos.web);
+          nuevasDirigidas = filtrar(revision.dirigidas, cupos.dirigidas);
         }
       } catch (error) {
         if (!(error instanceof ErrorFormato)) throw error;
       }
-      if (!nuevas.length) break;
+      if (!nuevasWeb.length && !nuevasDirigidas.length) break;
       emitir("etapa", { texto: `Profundizando (ronda ${ronda + 1})` });
-      await incorporar(conversacion, nuevas, contexto, cupo());
+      await buscarTanda(nuevasWeb, nuevasDirigidas);
     }
 
-    if (agotada(conversacion)) {
+    if (busquedasRestantes() <= 0) {
+      emitir("aviso", {
+        texto: `Se usaron las ${opciones.maxBusquedas} búsquedas previstas: redacto con lo encontrado.`,
+      });
+    } else if (agotada(conversacion)) {
       emitir("aviso", {
         texto: `Las últimas ${opciones.irrelevantesSeguidas} fuentes no aportaban al tema: dejo de buscar y redacto con lo encontrado.`,
       });

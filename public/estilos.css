@@ -189,7 +189,9 @@ textarea {
   color: var(--texto);
 }
 
-svg {
+/* Solo los íconos: los gráficos del informe traen sus propios colores. */
+.icono svg,
+.boton svg {
   width: 20px;
   height: 20px;
   fill: none;
@@ -492,76 +494,301 @@ svg {
   text-align: right;
 }
 
-.pasos {
-  max-height: 260px;
+/* Progreso como árbol: el tema arriba, las búsquedas colgando de un tronco y, a su derecha (abajo
+   en celular), las fuentes que trajo cada una. Las líneas son bordes de los propios elementos. */
+.arbol {
+  --linea: var(--borde);
+  /* Alto de una burbuja de dos renglones: los codos llegan a su mitad. */
+  --nodo-alto: 48px;
+  max-height: 380px;
   margin: 0;
-  padding: 4px 14px 12px;
+  padding: 12px 14px 14px;
   overflow-y: auto;
   border-top: 1px solid var(--borde);
+  font-size: 0.8125rem;
+  line-height: 1.35;
+}
+
+.raiz {
+  display: inline-block;
+  max-width: 100%;
+  margin: 0;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: var(--acento);
+  color: #06121c;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.ramas,
+.hojas {
+  margin: 0;
+  padding: 0;
   list-style: none;
-  font-size: 0.875rem;
 }
 
-.paso {
+.ramas {
+  margin-left: 14px;
+  padding-top: 8px;
+}
+
+.rama,
+.hoja {
+  position: relative;
+  animation: aparecer 0.35s ease both;
+}
+
+.rama {
   display: flex;
-  gap: 8px;
-  align-items: baseline;
-  padding: 3px 0;
-  color: var(--texto-suave);
+  align-items: flex-start;
+  gap: 0;
+  padding: 0 0 10px 24px;
 }
 
-.paso::before {
+/* Tronco y codo de cada rama; en la última, el tronco termina en el codo. */
+.rama::before,
+.hoja::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  border-left: 1.5px solid var(--linea);
+}
+
+.rama:last-child::before {
+  bottom: auto;
+  height: calc(var(--nodo-alto) / 2);
+}
+
+.rama::after,
+.hoja::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  width: 20px;
+  border-top: 1.5px solid var(--linea);
+  transform-origin: left;
+  animation: trazo 0.35s ease both;
+}
+
+.rama::after {
+  top: calc(var(--nodo-alto) / 2);
+}
+
+.consulta-nodo,
+.aviso-nodo {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 270px;
+  padding: 6px 10px;
+  border: 1.5px solid var(--acento);
+  border-radius: 9px;
+  background: var(--superficie-alta);
+  overflow-wrap: anywhere;
+}
+
+.consulta-nodo .etiqueta,
+.aviso-nodo .etiqueta {
+  display: block;
+  color: var(--acento);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.rama[data-destino="academico"] .consulta-nodo {
+  border-color: #d0a2f7;
+}
+
+.rama[data-destino="academico"] .etiqueta {
+  color: #d0a2f7;
+}
+
+.rama[data-destino="libros"] .consulta-nodo {
+  border-color: #ffb066;
+}
+
+.rama[data-destino="libros"] .etiqueta {
+  color: #ffb066;
+}
+
+.rama[data-destino="sitios"] .consulta-nodo {
+  border-color: #5fd3dc;
+}
+
+.rama[data-destino="sitios"] .etiqueta {
+  color: #5fd3dc;
+}
+
+.rama.nota .aviso-nodo {
+  max-width: none;
+  border-style: dashed;
+  border-color: var(--borde);
+  color: var(--texto);
+}
+
+/* Las fuentes de cada búsqueda: un tronco propio que sale del borde derecho del nodo. */
+.hojas {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  padding-left: 16px;
+}
+
+.hojas:not(:empty)::before {
+  content: "";
+  position: absolute;
+  top: calc(var(--nodo-alto) / 2);
+  left: 0;
+  width: 16px;
+  border-top: 1.5px solid var(--linea);
+}
+
+.hoja {
+  padding: 3px 0 3px 26px;
+}
+
+.hoja:first-child::before {
+  top: calc(var(--nodo-alto) / 2);
+}
+
+.hoja:last-child::before {
+  bottom: auto;
+  height: 14px;
+}
+
+.hoja:first-child:last-child::before {
+  display: none;
+}
+
+.hoja::after {
+  top: 14px;
+}
+
+.hoja:first-child::after {
+  top: calc(var(--nodo-alto) / 2);
+}
+
+.hoja a {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  max-width: 100%;
+  color: var(--texto);
+  text-decoration: none;
+}
+
+.hoja a:hover .titulo-fuente {
+  text-decoration: underline;
+}
+
+.hoja .punto {
   flex: none;
-  width: 70px;
-  white-space: nowrap;
-  font-size: 0.75rem;
+  align-self: center;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #f2c46d;
+}
+
+.hoja .estado-fuente {
+  flex: none;
+  color: #f2c46d;
+  font-size: 0.6875rem;
+  font-weight: 600;
   letter-spacing: 0.03em;
   text-transform: uppercase;
 }
 
-.paso.consulta::before {
-  content: "Busca";
-  color: var(--acento);
+.hoja .titulo-fuente {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.paso.consulta[data-idioma]::before {
-  content: "Busca " attr(data-idioma);
+.hoja[data-estado="leyendo"] .punto {
+  animation: latir 1s ease-in-out infinite;
 }
 
-.paso.advertencia {
-  color: var(--texto);
+.hoja[data-estado="lista"] .punto {
+  background: var(--bien);
 }
 
-.paso.advertencia::before {
-  content: "Aviso";
-  color: var(--acento);
-}
-
-.paso.fuente::before {
-  content: "Lee";
-}
-
-.paso.fuente[data-estado="lista"]::before {
-  content: "Leída";
+.hoja[data-estado="lista"] .estado-fuente {
   color: var(--bien);
 }
 
-.paso.fuente[data-estado="descartada"]::before {
-  content: "Omitida";
+.hoja[data-estado="descartada"] .punto {
+  background: #5c6370;
 }
 
-.paso.fuente[data-estado="descartada"] a {
+.hoja[data-estado="descartada"] .estado-fuente,
+.hoja[data-estado="descartada"] a {
   color: var(--texto-suave);
+}
+
+.hoja[data-estado="descartada"] .titulo-fuente {
   text-decoration: line-through;
 }
 
-.paso .detalle {
-  min-width: 0;
-  overflow-wrap: anywhere;
+.hoja .motivo {
+  display: block;
+  margin-left: 15px;
+  color: var(--texto-suave);
+  font-size: 0.75rem;
 }
 
-.paso .motivo {
-  color: var(--texto-suave);
+@keyframes aparecer {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+@keyframes trazo {
+  from {
+    transform: scaleX(0);
+  }
+}
+
+@keyframes latir {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (max-width: 560px) {
+  .rama {
+    flex-direction: column;
+    padding-left: 20px;
+  }
+
+  .hojas {
+    width: 100%;
+    padding: 6px 0 0 10px;
+  }
+
+  .hojas:not(:empty)::before {
+    display: none;
+  }
+
+  .hoja:first-child::before,
+  .hoja:first-child::after {
+    top: 0;
+  }
+
+  .hoja:first-child::after {
+    top: 14px;
+  }
+
+  .hoja:first-child:last-child::before {
+    display: block;
+    height: 14px;
+  }
 }
 
 .informe {
@@ -664,6 +891,40 @@ svg {
   border-bottom: 0;
 }
 
+.grafico {
+  margin: 1.4em 0;
+}
+
+.grafico svg {
+  display: block;
+  width: 100%;
+  max-width: 640px;
+  height: auto;
+}
+
+.grafico.imagen img {
+  display: block;
+  max-width: 100%;
+  max-height: 480px;
+  border-radius: 8px;
+}
+
+.grafico figcaption {
+  margin-top: 6px;
+  color: var(--texto-suave);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.imagen-no-disponible {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px dashed var(--borde);
+  border-radius: 8px;
+  color: var(--texto-suave);
+  font-size: 0.875rem;
+}
+
 a.cita {
   margin: 0 1px;
   padding: 0 5px;
@@ -723,54 +984,6 @@ a.cita:hover {
   box-shadow:
     0 0 0 1px color-mix(in srgb, var(--acento) 30%, transparent),
     0 0 22px color-mix(in srgb, var(--acento) 38%, transparent);
-}
-
-.profundidades {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 6px;
-  margin-bottom: 8px;
-}
-
-.profundidades label {
-  position: relative;
-  cursor: pointer;
-}
-
-.profundidades input {
-  position: absolute;
-  opacity: 0;
-  pointer-events: none;
-}
-
-.profundidades label > span {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: 6px 8px;
-  border: 1px solid var(--borde);
-  border-radius: 10px;
-  background: var(--superficie);
-  font-size: 0.875rem;
-  font-weight: 600;
-  line-height: 1.3;
-  text-align: center;
-}
-
-.profundidades small {
-  color: var(--texto-suave);
-  font-size: 0.75rem;
-  font-weight: 400;
-}
-
-.profundidades input:checked + span {
-  border-color: var(--acento);
-  background: var(--acento-fondo);
-}
-
-.profundidades input:focus-visible + span {
-  outline: 2px solid var(--acento);
-  outline-offset: 2px;
 }
 
 .aviso-redactor {
@@ -955,10 +1168,6 @@ a.cita:hover {
     padding: 16px;
   }
 
-  .profundidades .cantidad {
-    display: none;
-  }
-
   .campos {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -972,10 +1181,6 @@ a.cita:hover {
     font-size: 1.35rem;
   }
 
-  .paso::before {
-    width: 64px;
-  }
-
   .redactor {
     padding-inline: 12px;
   }
@@ -984,5 +1189,12 @@ a.cita:hover {
 @media (prefers-reduced-motion: reduce) {
   .indicador {
     animation-duration: 3s;
+  }
+
+  .rama,
+  .hoja,
+  .rama::after,
+  .hoja::after {
+    animation: none;
   }
 }

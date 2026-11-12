@@ -5,6 +5,8 @@ import { VENDOR } from "../src/vendor.js";
 
 const RAIZ = fileURLToPath(new URL("..", import.meta.url));
 const META_API = '<meta name="api" content="" />';
+// Páginas que hablan con la API (las dos cargan comun.js, que lee la dirección de su meta).
+const PAGINAS = ["index.html", "informe.html"];
 
 // Copia public/ y las librerías a `destino`, apuntando la página a la API de `urlApi`.
 export function armarPagina(destino, urlApi) {
@@ -15,28 +17,30 @@ export function armarPagina(destino, urlApi) {
     cpSync(join(RAIZ, archivo), join(destino, "vendor", nombre));
   }
 
-  const indice = join(destino, "index.html");
-  const html = readFileSync(indice, "utf8");
-  if (html.split(META_API).length !== 2) {
-    throw new Error(`index.html debe tener una sola vez: ${META_API}`);
-  }
-  // GitHub Pages no deja poner cabeceras: la política va en la página. Limita a dónde podría mandar
-  // datos un script inyectado, porque el token de sesión queda en localStorage.
+  // GitHub Pages no deja poner cabeceras: la política va en cada página. Limita a dónde podría
+  // mandar datos un script inyectado, porque el token de sesión queda en localStorage.
   const politica = [
     "default-src 'self'",
     `connect-src 'self' ${api}`,
-    "img-src 'self' data:",
+    "img-src 'self' data: https:",
     "object-src 'none'",
     "base-uri 'none'",
   ].join("; ");
-  writeFileSync(
-    indice,
-    html.replace(
-      META_API,
-      `<meta name="api" content="${api}" />\n` +
-        `    <meta http-equiv="Content-Security-Policy" content="${politica}" />`,
-    ),
-  );
+  for (const pagina of PAGINAS) {
+    const ruta = join(destino, pagina);
+    const html = readFileSync(ruta, "utf8");
+    if (html.split(META_API).length !== 2) {
+      throw new Error(`${pagina} debe tener una sola vez: ${META_API}`);
+    }
+    writeFileSync(
+      ruta,
+      html.replace(
+        META_API,
+        `<meta name="api" content="${api}" />\n` +
+          `    <meta http-equiv="Content-Security-Policy" content="${politica}" />`,
+      ),
+    );
+  }
   return api;
 }
 

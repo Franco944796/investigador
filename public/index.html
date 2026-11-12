@@ -82,8 +82,10 @@
           <div id="vacio" class="vacio">
             <h1>¿Qué querés investigar?</h1>
             <p>
-              Busco en la web, leo las fuentes y te entrego un informe con citas. Podés cerrar la
-              página mientras investigo: queda guardado en tu historial, con el informe en PDF.
+              Hago una investigación exhaustiva: hasta 100 búsquedas en español, inglés, chino y
+              otros idiomas según el tema, leo las fuentes y te entrego un informe con citas.
+              Puede tardar horas: podés cerrar la página y lo encontrás en tu historial, con el
+              informe en PDF.
             </p>
 
             <section class="guia" aria-labelledby="titulo-guia">
@@ -111,7 +113,7 @@
                 </div>
                 <div>
                   <dt>Fuentes</dt>
-                  <dd>Oficiales, académicas, de un país o idioma.</dd>
+                  <dd>Sitios a consultar (who.int, Google Scholar…) o el tipo: oficiales, de un país.</dd>
                 </div>
               </dl>
               <div class="guia-acciones">
@@ -124,26 +126,12 @@ Contexto: casa en Córdoba, 450 kWh/mes, techo de chapa al norte, 2026.
 Aspectos: costo llave en mano, ahorro, recupero, financiamiento, trámites.
 Excluir: sistemas aislados con baterías.
 Entrega: tabla comparativa de 3 tamaños y una recomendación.
-Fuentes: preferir oficiales y argentinas.</pre>
+Fuentes: argentina.gob.ar, Google Scholar; preferir oficiales y argentinas.</pre>
             </section>
           </div>
         </section>
 
         <form id="redactor" class="redactor">
-          <div id="profundidades" class="profundidades" role="radiogroup" aria-label="Profundidad">
-            <label>
-              <input type="radio" name="profundidad" value="normal" checked />
-              <span>Normal<small><span class="cantidad">~20 fuentes · </span>~10 min</small></span>
-            </label>
-            <label>
-              <input type="radio" name="profundidad" value="profunda" />
-              <span>Profunda<small><span class="cantidad">~40 fuentes · </span>15–60 min</small></span>
-            </label>
-            <label>
-              <input type="radio" name="profundidad" value="exhaustiva" />
-              <span>Exhaustiva<small><span class="cantidad">hasta 300 fuentes · </span>horas</small></span>
-            </label>
-          </div>
           <p id="aviso-redactor" class="aviso-redactor" role="alert" hidden></p>
           <div class="fila">
             <textarea id="texto" rows="1" maxlength="2000" aria-label="Mensaje"></textarea>
@@ -177,7 +165,10 @@ Fuentes: preferir oficiales y argentinas.</pre>
             <span class="etapa">Empezando</span>
             <span class="contador"></span>
           </summary>
-          <ol class="pasos"></ol>
+          <div class="arbol">
+            <p class="raiz"></p>
+            <ol class="ramas"></ol>
+          </div>
         </details>
         <p class="segundo-plano" hidden>
           Podés cerrar la página: la investigación sigue en el servidor y la encontrás en
@@ -186,6 +177,7 @@ Fuentes: preferir oficiales y argentinas.</pre>
         <div class="informe"></div>
         <p class="aviso" role="alert" hidden></p>
         <div class="acciones" hidden>
+          <a class="boton principal ver-informe" target="_blank" rel="noopener">Ver informe</a>
           <button type="button" class="boton descarga">Descargar PDF</button>
         </div>
       </article>

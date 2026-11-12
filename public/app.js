@@ -1,9 +1,17 @@
-const { marked, DOMPurify } = globalThis;
-const $ = (selector) => document.querySelector(selector);
-
-// Vacío cuando la página la sirve el mismo servidor; scripts/pagina.js pone la dirección de Render
-// en la copia que se publica en GitHub Pages.
-const API = $('meta[name="api"]').content;
+import {
+  $,
+  API,
+  cabeceras,
+  descargar,
+  guardarDato,
+  guardarToken,
+  hayToken,
+  leerGuardado,
+  olvidarSesion,
+  pausa,
+  pedir,
+  pintarMarkdown,
+} from "./comun.js";
 
 const entrada = $("#entrada");
 const app = $("#app");
@@ -26,7 +34,8 @@ const CAMPOS = ["Pregunta", "Contexto", "Aspectos", "Excluir", "Entrega", "Fuent
 const PLANTILLA = CAMPOS.map((campo) => `${campo}: `).join("\n");
 const CAMPO_VACIO = new RegExp(`^\\s*(${CAMPOS.join("|")}):\\s*$`, "i");
 const TERMINALES = new Set(["fin", "error", "cancelada"]);
-const PROFUNDIDADES = { normal: "Normal", profunda: "Profunda", exhaustiva: "Exhaustiva" };
+// Solo para las guardadas cuando había varios tipos; las exhaustivas no se rotulan.
+const PROFUNDIDADES = { normal: "Normal", profunda: "Profunda" };
 const ESTADOS = {
   lista: "Lista",
   fallida: "Falló",
@@ -41,87 +50,7 @@ const limpiarPedido = (valor) =>
     .join("\n")
     .trim();
 
-const pausa = (ms, signal) =>
-  new Promise((listo) => {
-    const reloj = setTimeout(listo, ms);
-    signal?.addEventListener("abort", () => {
-      clearTimeout(reloj);
-      listo();
-    });
-  });
 
-// En GitHub Pages el almacenamiento lo comparten todos los proyectos del sitio: las claves llevan
-// prefijo. Si el navegador lo bloquea, la sesión dura hasta recargar y la profundidad vuelve a
-// Normal.
-function leerGuardado(clave) {
-  try {
-    return localStorage.getItem(`investigador-${clave}`);
-  } catch {
-    return null;
-  }
-}
-
-function guardarDato(clave, valor) {
-  try {
-    if (valor === null) localStorage.removeItem(`investigador-${clave}`);
-    else localStorage.setItem(`investigador-${clave}`, valor);
-  } catch {}
-}
-
-let token = leerGuardado("token");
-
-function olvidarSesion() {
-  token = null;
-  guardarDato("token", null);
-}
-
-const cabeceras = (extra = {}) => (token ? { ...extra, Authorization: `Bearer ${token}` } : extra);
-
-// Render apaga el servidor gratuito tras 15 min sin uso y tarda hasta un minuto en despertar.
-// Solo se reintentan las lecturas: repetir un POST podría lanzar dos veces la misma investigación.
-let pedidosLentos = 0;
-
-async function conEspera(hacer, reintentar) {
-  let lento = false;
-  const reloj = setTimeout(() => {
-    lento = true;
-    $("#conexion").hidden = ++pedidosLentos === 0;
-  }, 3000);
-  try {
-    for (let intento = 1; ; intento++) {
-      try {
-        const respuesta = await hacer();
-        const caido = [502, 503, 504].includes(respuesta.status);
-        if (!reintentar || !caido || intento >= 40) return respuesta;
-      } catch {
-        if (!reintentar || intento >= 40) {
-          throw new Error("No se pudo conectar con el servidor. Probá de nuevo en un momento.");
-        }
-      }
-      await pausa(3000);
-    }
-  } finally {
-    clearTimeout(reloj);
-    if (lento) $("#conexion").hidden = --pedidosLentos === 0;
-  }
-}
-
-async function pedir(ruta, { metodo = "GET", cuerpo } = {}) {
-  const opciones = {
-    method: metodo,
-    headers: cabeceras(cuerpo === undefined ? {} : { "Content-Type": "application/json" }),
-    body: cuerpo === undefined ? undefined : JSON.stringify(cuerpo),
-  };
-  const respuesta = await conEspera(() => fetch(API + ruta, opciones), metodo === "GET");
-  if (respuesta.status === 401) olvidarSesion();
-  const datos = respuesta.status === 204 ? {} : await respuesta.json().catch(() => ({}));
-  if (!respuesta.ok) {
-    throw Object.assign(new Error(datos.error || "No se pudo completar el pedido."), {
-      estado: respuesta.status,
-    });
-  }
-  return datos;
-}
 
 function mostrarUso(uso) {
   $("#uso").textContent = uso?.limite ? `${uso.usadas} de ${uso.limite} hoy` : "";
@@ -181,7 +110,6 @@ function mostrarEntrada() {
 function actualizarRedactor() {
   const enConversacion = Boolean(estado.conversacion);
   const cerrada = enConversacion && !estado.ocupada && !estado.conInforme;
-  $("#profundidades").hidden = enConversacion;
   botonEnviar.textContent = estado.ocupada ? "Detener" : enConversacion ? "Preguntar" : "Investigar";
   botonEnviar.classList.toggle("principal", !estado.ocupada);
   botonEnviar.disabled = cerrada;
@@ -214,48 +142,6 @@ function duracion(ms) {
   return `${Math.floor(minutos / 60)} h ${minutos % 60} min`;
 }
 
-function enlazarCitas(contenedor) {
-  const recorrido = document.createTreeWalker(contenedor, NodeFilter.SHOW_TEXT);
-  const nodos = [];
-  while (recorrido.nextNode()) {
-    const nodo = recorrido.currentNode;
-    if (/\[\d+\]/.test(nodo.data) && !nodo.parentElement.closest("a, code, pre")) nodos.push(nodo);
-  }
-  for (const nodo of nodos) {
-    const partes = nodo.data.split(/\[(\d+)\]/);
-    const fragmento = document.createDocumentFragment();
-    partes.forEach((parte, indice) => {
-      const url = indice % 2 ? estado.fuentes.get(Number(parte)) : null;
-      if (!url) {
-        fragmento.append(indice % 2 ? `[${parte}]` : parte);
-        return;
-      }
-      const cita = document.createElement("a");
-      cita.className = "cita";
-      cita.href = url;
-      cita.textContent = parte;
-      fragmento.append(cita);
-    });
-    nodo.replaceWith(fragmento);
-  }
-}
-
-function pintarMarkdown(contenedor, markdown) {
-  contenedor.innerHTML = DOMPurify.sanitize(marked.parse(markdown), {
-    FORBID_TAGS: ["img", "style", "form", "input", "button"],
-  });
-  for (const tabla of contenedor.querySelectorAll("table")) {
-    const envoltura = document.createElement("div");
-    envoltura.className = "tabla";
-    tabla.replaceWith(envoltura);
-    envoltura.append(tabla);
-  }
-  enlazarCitas(contenedor);
-  for (const enlace of contenedor.querySelectorAll("a")) {
-    enlace.target = "_blank";
-    enlace.rel = "noopener noreferrer";
-  }
-}
 
 function agregarPregunta(contenido) {
   const nodo = clonar("#plantilla-pregunta");
@@ -263,12 +149,28 @@ function agregarPregunta(contenido) {
   mensajes.append(nodo);
 }
 
-function agregarRespuesta() {
+const ETIQUETAS = { academico: "Papers", libros: "Libros", sitios: "En sitio" };
+const ESTADOS_DE_FUENTE = { leyendo: "Leyendo", lista: "Leída", descartada: "Omitida" };
+
+const elemento = (etiqueta, propiedades = {}, ...hijos) => {
+  const nodo = Object.assign(document.createElement(etiqueta), propiedades);
+  nodo.append(...hijos);
+  return nodo;
+};
+
+const tituloDe = (texto) =>
+  (texto.match(/^\s*Pregunta:[ \t]*(\S.*)$/im)?.[1] ?? texto.split("\n")[0]).slice(0, 140);
+
+function agregarRespuesta(pregunta = "") {
   const nodo = clonar("#plantilla-respuesta");
   const progreso = nodo.querySelector(".progreso");
   const etapa = nodo.querySelector(".etapa");
   const contador = nodo.querySelector(".contador");
-  const pasos = nodo.querySelector(".pasos");
+  const arbol = nodo.querySelector(".arbol");
+  const ramas = nodo.querySelector(".ramas");
+  nodo.querySelector(".raiz").textContent = tituloDe(pregunta) || "Investigación";
+  const hojasDe = new Map();
+  let sueltas = null;
   const informe = nodo.querySelector(".informe");
   const aviso = nodo.querySelector(".aviso");
   const segundoPlano = nodo.querySelector(".segundo-plano");
@@ -299,41 +201,95 @@ function agregarRespuesta() {
     contador.textContent = partes.join(" · ");
   }
 
-  function agregarPaso(clase, contenido) {
-    const fila = document.createElement("li");
-    fila.className = `paso ${clase}`;
-    const detalle = document.createElement("span");
-    detalle.className = "detalle";
-    detalle.append(contenido);
-    fila.append(detalle);
-    pasos.append(fila);
-    pasos.scrollTop = pasos.scrollHeight;
-    return fila;
+  // Sigue a lo último que aparece solo si quien lee ya estaba al final del árbol.
+  function enArbol(cambio) {
+    const seguir = arbol.scrollHeight - arbol.scrollTop - arbol.clientHeight < 40;
+    const resultado = cambio();
+    if (seguir) arbol.scrollTop = arbol.scrollHeight;
+    return resultado;
   }
 
-  function pintarFuente({ id, url, titulo, estado: situacion, n, motivo }) {
-    let fila = filas.get(id);
-    if (!fila) {
-      const enlace = document.createElement("a");
-      enlace.target = "_blank";
-      enlace.rel = "noopener noreferrer";
-      fila = agregarPaso("fuente", enlace);
-      filas.set(id, fila);
+  function agregarRama({ id, texto, idioma, destino, etiqueta: propia }) {
+    return enArbol(() => {
+      const etiqueta = propia ?? `${ETIQUETAS[destino] ?? "Busca"}${idioma ? ` ${idioma}` : ""}`;
+      const hojas = elemento("ol", { className: "hojas" });
+      const rama = elemento(
+        "li",
+        { className: "rama" },
+        elemento(
+          "div",
+          { className: "consulta-nodo", title: texto },
+          elemento("span", { className: "etiqueta", textContent: etiqueta }),
+          elemento("span", { textContent: texto, ...(idioma && { lang: idioma }) }),
+        ),
+        hojas,
+      );
+      if (destino) rama.dataset.destino = destino;
+      ramas.append(rama);
+      if (id) hojasDe.set(id, hojas);
+      if (!propia) sueltas = null;
+      return hojas;
+    });
+  }
+
+  function agregarAviso(texto) {
+    enArbol(() =>
+      ramas.append(
+        elemento(
+          "li",
+          { className: "rama nota" },
+          elemento(
+            "div",
+            { className: "aviso-nodo" },
+            elemento("span", { className: "etiqueta", textContent: "Aviso" }),
+            texto,
+          ),
+        ),
+      ),
+    );
+  }
+
+  // Las investigaciones guardadas antes de numerar las búsquedas no dicen de cuál salió cada
+  // fuente: van juntas en una rama aparte para no atribuirlas mal.
+  function pintarFuente({ id, url, titulo, estado: situacion, n, motivo, consulta }) {
+    let hoja = filas.get(id);
+    if (!hoja) {
+      const destino =
+        hojasDe.get(consulta) ??
+        (sueltas ??= agregarRama({ texto: "Fuentes de estas búsquedas", etiqueta: "Fuentes" }));
+      hoja = enArbol(() => {
+        const nueva = elemento(
+          "li",
+          { className: "hoja" },
+          elemento(
+            "a",
+            { target: "_blank", rel: "noopener noreferrer" },
+            elemento("span", { className: "punto" }),
+            elemento("span", { className: "estado-fuente" }),
+            elemento("span", { className: "titulo-fuente" }),
+          ),
+        );
+        destino.append(nueva);
+        return nueva;
+      });
+      filas.set(id, hoja);
     }
-    const enlace = fila.querySelector("a");
+    const enlace = hoja.querySelector("a");
     if (url) enlace.href = url;
-    if (titulo || url) enlace.textContent = titulo || new URL(url).hostname;
-    fila.dataset.estado = situacion;
+    if (titulo || url) {
+      const nombre = titulo || new URL(url).hostname;
+      hoja.querySelector(".titulo-fuente").textContent = nombre;
+      enlace.title = url ? `${nombre}\n${url}` : nombre;
+    }
+    hoja.dataset.estado = situacion;
+    hoja.querySelector(".estado-fuente").textContent = ESTADOS_DE_FUENTE[situacion] ?? "";
     if (situacion === "lista") {
       estado.fuentes.set(n, url);
       leidas++;
       contar();
     }
-    if (situacion === "descartada" && motivo) {
-      const nota = document.createElement("span");
-      nota.className = "motivo";
-      nota.textContent = ` (${motivo})`;
-      fila.querySelector(".detalle").append(nota);
+    if (situacion === "descartada" && motivo && !hoja.querySelector(".motivo")) {
+      hoja.append(elemento("span", { className: "motivo", textContent: motivo }));
     }
   }
 
@@ -361,13 +317,9 @@ function agregarRespuesta() {
         }
         if (tipo === "etapa") etapa.textContent = datos.texto;
         if (tipo === "espera") etapa.textContent = `Esperando cupo del proveedor (${datos.segundos} s)`;
-        if (tipo === "aviso") agregarPaso("advertencia", datos.texto);
+        if (tipo === "aviso") agregarAviso(datos.texto);
         if (tipo === "consulta") {
-          const paso = agregarPaso("consulta", datos.texto);
-          if (datos.idioma) {
-            paso.dataset.idioma = datos.idioma;
-            paso.lang = datos.idioma;
-          }
+          agregarRama(datos);
           busquedas++;
           contar();
         }
@@ -378,7 +330,7 @@ function agregarRespuesta() {
           pintadoPendiente = true;
           requestAnimationFrame(() => {
             pintadoPendiente = false;
-            conScroll(() => pintarMarkdown(informe, markdown));
+            conScroll(() => pintarMarkdown(informe, markdown, citaDeFuente));
           });
         }
         if (tipo === "error") vista.fallar(datos.mensaje, datos.hora);
@@ -388,6 +340,7 @@ function agregarRespuesta() {
           if (datos.pdf) {
             const descarga = nodo.querySelector(".descarga");
             const id = estado.conversacion;
+            nodo.querySelector(".ver-informe").href = `informe.html?id=${encodeURIComponent(id)}`;
             descarga.onclick = () => descargarPDF(id, descarga, aviso);
             nodo.querySelector(".acciones").hidden = false;
           }
@@ -404,25 +357,23 @@ function agregarRespuesta() {
   return vista;
 }
 
-// La descarga necesita el token en la cabecera, así que no alcanza con un enlace al PDF.
+function citaDeFuente(n) {
+  const url = estado.fuentes.get(n);
+  if (!url) return null;
+  return Object.assign(document.createElement("a"), {
+    className: "cita",
+    href: url,
+    textContent: String(n),
+    target: "_blank",
+    rel: "noopener noreferrer",
+  });
+}
+
 async function descargarPDF(id, boton, aviso) {
   boton.disabled = true;
   aviso.hidden = true;
   try {
-    const pedido = () => fetch(`${API}/api/informe/${id}`, { headers: cabeceras() });
-    const respuesta = await conEspera(pedido, true);
-    if (!respuesta.ok) {
-      const { error } = await respuesta.json().catch(() => ({}));
-      throw new Error(error || "No se pudo descargar el PDF.");
-    }
-    const disposicion = respuesta.headers.get("Content-Disposition") ?? "";
-    const nombre = disposicion.match(/filename="([^"]+)"/)?.[1] ?? "informe.pdf";
-    const url = URL.createObjectURL(await respuesta.blob());
-    const enlace = Object.assign(document.createElement("a"), { href: url, download: nombre });
-    document.body.append(enlace);
-    enlace.click();
-    enlace.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 60000);
+    await descargar(`/api/informe/${id}`, "informe.pdf");
   } catch (fallo) {
     aviso.textContent = fallo.message;
     aviso.hidden = false;
@@ -460,7 +411,7 @@ function limpiarMensajes() {
 function procesar({ tipo, datos }) {
   if (tipo === "pregunta") {
     agregarPregunta(datos.texto);
-    estado.vista = agregarRespuesta();
+    estado.vista = agregarRespuesta(datos.texto);
     estado.ocupada = true;
   } else if (tipo === "listo") {
     estado.enVivo = true;
@@ -548,7 +499,7 @@ function describir(item) {
     item.estado === "en-curso"
       ? `En curso${item.etapa ? ` · ${item.etapa}` : ""}`
       : (ESTADOS[item.estado] ?? item.estado);
-  return [situacion, PROFUNDIDADES[item.profundidad] ?? item.profundidad, fecha].join(" · ");
+  return [situacion, PROFUNDIDADES[item.profundidad], fecha].filter(Boolean).join(" · ");
 }
 
 async function cargarHistorial() {
@@ -604,8 +555,7 @@ $("#formulario-entrada").addEventListener("submit", async (evento) => {
       metodo: "POST",
       cuerpo: { codigo: $("#codigo").value },
     });
-    token = sesion.token;
-    guardarDato("token", token);
+    guardarToken(sesion.token);
     mostrarApp(sesion);
     $("#codigo").value = "";
   } catch (fallo) {
@@ -638,10 +588,9 @@ $("#redactor").addEventListener("submit", async (evento) => {
       });
       estado.ocupada = true;
     } else {
-      const profundidad = $('input[name="profundidad"]:checked').value;
       const { conversacion, uso } = await pedir("/api/investigar", {
         metodo: "POST",
-        cuerpo: { tema: contenido, profundidad },
+        cuerpo: { tema: contenido },
       });
       mostrarUso(uso);
       abrirConversacion(conversacion);
@@ -682,14 +631,6 @@ $("#plantilla").addEventListener("click", () => {
   texto.setSelectionRange(finDePregunta, finDePregunta);
 });
 
-const elegida = document.querySelector(
-  `input[name="profundidad"][value="${leerGuardado("profundidad") ?? "normal"}"]`,
-);
-if (elegida) elegida.checked = true;
-$("#profundidades").addEventListener("change", (evento) =>
-  guardarDato("profundidad", evento.target.value),
-);
-
 if (leerGuardado("panel") === "cerrado") app.classList.add("panel-cerrado");
 for (const boton of document.querySelectorAll(".accion-abrir")) {
   boton.addEventListener("click", abrirPanel);
@@ -713,7 +654,7 @@ $("#salir").addEventListener("click", () => {
   location.reload();
 });
 
-if (!token) {
+if (!hayToken()) {
   mostrarEntrada();
 } else {
   try {

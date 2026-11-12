@@ -36,7 +36,7 @@ export async function levantar({ acceso, almacen, urlLLM, entorno = {}, demoraLe
     opciones: config.investigacion,
   });
   await almacen.preparar();
-  const app = crearApp({ config, acceso, investigadores: { normal: investigador }, almacen, generarPDF });
+  const app = crearApp({ config, acceso, investigador, almacen, generarPDF });
   const servidor = app.listen(0, "127.0.0.1");
   await new Promise((listo) => servidor.once("listening", listo));
   return { app, servidor, base: `http://127.0.0.1:${servidor.address().port}` };
@@ -63,8 +63,8 @@ export function cliente(base) {
       if (respuesta.ok) token = (await respuesta.clone().json()).token;
       return respuesta;
     },
-    async investigar(tema, profundidad) {
-      return pedir("/api/investigar", { metodo: "POST", cuerpo: { tema, profundidad } });
+    async investigar(tema) {
+      return pedir("/api/investigar", { metodo: "POST", cuerpo: { tema } });
     },
     // Lee el flujo de una conversación hasta juntar `terminales` turnos terminados (o hasta el
     // evento "listo", si se pide) y corta la conexión.

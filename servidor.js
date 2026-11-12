@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { Acceso } from "./src/acceso.js";
 import { conectarPostgres, crearAlmacenMemoria, crearAlmacenSQL } from "./src/almacen.js";
 import { crearApp } from "./src/app.js";
-import { crearBuscador } from "./src/busqueda.js";
+import { crearBuscador, crearBuscadorAcademico, crearBuscadorDeLibros } from "./src/busqueda.js";
 import { leerConfig } from "./src/config.js";
 import { crearInvestigador } from "./src/investigador.js";
 import { leerPagina } from "./src/lector.js";
@@ -52,14 +52,21 @@ try {
 
 const llm = crearLLM(config.proveedores, { limiteMs: config.limiteLLMMs });
 const buscar = crearBuscador({ tavilyClave: config.tavilyClave });
-const investigadores = Object.fromEntries(
-  Object.entries(config.profundidades).map(([nombre, perfil]) => [
-    nombre,
-    crearInvestigador({ llm, buscar, leerPagina, opciones: { ...config.investigacion, ...perfil } }),
-  ]),
-);
+const buscarAcademico = crearBuscadorAcademico({ clave: config.openalexClave });
+const buscarLibros = crearBuscadorDeLibros({
+  claveOpenAlex: config.openalexClave,
+  claveGoogleBooks: config.googleBooksClave,
+});
+const investigador = crearInvestigador({
+  llm,
+  buscar,
+  buscarAcademico,
+  buscarLibros,
+  leerPagina,
+  opciones: config.investigacion,
+});
 
-const app = crearApp({ config, acceso, investigadores, almacen, generarPDF });
+const app = crearApp({ config, acceso, investigador, almacen, generarPDF });
 
 // Render duerme el servicio tras 15 minutos sin pedidos entrantes, aunque haya una
 // investigación corriendo: mientras la haya, el servidor se pide a sí mismo por la URL pública.
@@ -84,4 +91,6 @@ app.listen(config.puerto, config.host, () => {
     console.warn("Sin proveedores de modelos: cargá al menos una clave LLM_n_CLAVE en .env.");
   }
   console.log(`Búsqueda: ${config.tavilyClave ? "Tavily + DuckDuckGo" : "solo DuckDuckGo"}`);
+  console.log(`Académico: OpenAlex ${config.openalexClave ? "con clave" : "sin clave (presupuesto compartido por IP)"}`);
+  console.log(`Libros: OpenAlex${config.googleBooksClave ? " + Google Books" : " (sin clave de Google Books)"}`);
 });
