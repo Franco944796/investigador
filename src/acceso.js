@@ -75,11 +75,7 @@ export class Acceso {
     this.#intentos.delete(ip);
     const expira = ahora + DURACION_SESION_MS;
     const nombre = Buffer.from(persona.nombre).toString("base64url");
-    return {
-      persona,
-      token: `${nombre}.${expira}.${this.#firmar(persona, expira)}`,
-      duracionMs: DURACION_SESION_MS,
-    };
+    return { persona, token: `${nombre}.${expira}.${this.#firmar(persona, expira)}` };
   }
 
   verificar(token) {

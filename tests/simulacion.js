@@ -11,7 +11,11 @@ import { buscarSimulado, crearLectorSimulado, iniciarLLMSimulado } from "./simul
 
 const demoraMs = Number(process.env.DEMORA_MS ?? 600);
 const llmSimulado = await iniciarLLMSimulado({ demoraMs });
-const config = leerConfig({ PUERTO: process.env.PUERTO ?? "3211", CONSULTAS_INICIALES: "2" });
+const config = leerConfig({
+  PUERTO: process.env.PUERTO ?? "3211",
+  CONSULTAS_INICIALES: "2",
+  ORIGENES_PERMITIDOS: process.env.ORIGENES_PERMITIDOS,
+});
 const llm = crearLLM([{ urlBase: llmSimulado.urlBase, clave: "", modelo: "auto" }], { esperas: [300] });
 const investigadores = Object.fromEntries(
   Object.entries(config.profundidades).map(([nombre, perfil]) => [

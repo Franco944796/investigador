@@ -4,7 +4,12 @@ import { crearAlmacenMemoria } from "../src/almacen.js";
 import { cliente, crearAcceso, crearAlmacenPGlite, levantar, textoDe, ultimoTurno } from "./ayuda.js";
 import { iniciarLLMSimulado } from "./simulados.js";
 
-const ENTORNO = { CONSULTAS_INICIALES: "2", RESULTADOS_POR_CONSULTA: "4" };
+const ENTORNO = {
+  CONSULTAS_INICIALES: "2",
+  RESULTADOS_POR_CONSULTA: "4",
+  ORIGENES_PERMITIDOS: "https://franco944796.github.io/",
+};
+const PAGES = "https://franco944796.github.io";
 const cerrar = [];
 
 let llmSimulado;
@@ -31,6 +36,44 @@ test("sin sesión no se puede investigar y el código incorrecto se rechaza", as
   const anonimo = cliente(base);
   assert.equal((await anonimo.investigar("algo")).status, 401);
   assert.equal((await anonimo.entrar("codigo-falso")).status, 401);
+  const falso = { cabeceras: { Authorization: "Bearer YW5h.9999999999999.firma" } };
+  assert.equal((await anonimo.pedir("/api/sesion", falso)).status, 401);
+});
+
+test("la sesión viaja como token en la cabecera, sin cookie", async () => {
+  const ana = cliente(base);
+  const respuesta = await ana.entrar("codigo-de-ana");
+  assert.equal(respuesta.headers.get("set-cookie"), null);
+  const { nombre, token } = await respuesta.json();
+  assert.equal(nombre, "ana");
+  assert.match(token, /^[\w-]+\.\d+\.[\w-]+$/);
+  assert.equal((await ana.pedir("/api/sesion")).status, 200);
+});
+
+test("la API acepta pedidos desde GitHub Pages y no desde otros sitios", async () => {
+  const anonimo = cliente(base);
+  const previo = await anonimo.pedir("/api/investigar", {
+    metodo: "OPTIONS",
+    cabeceras: {
+      Origin: PAGES,
+      "Access-Control-Request-Method": "POST",
+      "Access-Control-Request-Headers": "authorization, content-type",
+    },
+  });
+  assert.equal(previo.status, 204);
+  assert.equal(previo.headers.get("access-control-allow-origin"), PAGES);
+  assert.match(previo.headers.get("access-control-allow-headers"), /Authorization/);
+  assert.match(previo.headers.get("access-control-allow-methods"), /DELETE/);
+
+  const permitido = await anonimo.pedir("/api/sesion", { cabeceras: { Origin: PAGES } });
+  assert.equal(permitido.headers.get("access-control-allow-origin"), PAGES);
+  assert.match(permitido.headers.get("access-control-expose-headers"), /Content-Disposition/);
+  assert.match(permitido.headers.get("vary"), /Origin/);
+
+  const ajeno = await anonimo.pedir("/api/sesion", {
+    cabeceras: { Origin: "https://otro.github.io" },
+  });
+  assert.equal(ajeno.headers.get("access-control-allow-origin"), null);
 });
 
 test("investigación en segundo plano, seguimiento, PDF, historial y límite diario", async () => {

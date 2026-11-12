@@ -43,11 +43,15 @@ export async function levantar({ acceso, almacen, urlLLM, entorno = {}, demoraLe
 }
 
 export function cliente(base) {
-  let cookie = "";
-  const pedir = (ruta, { metodo = "GET", cuerpo, signal } = {}) =>
+  let token = "";
+  const pedir = (ruta, { metodo = "GET", cuerpo, signal, cabeceras = {} } = {}) =>
     fetch(base + ruta, {
       method: metodo,
-      headers: { "Content-Type": "application/json", ...(cookie && { Cookie: cookie }) },
+      headers: {
+        "Content-Type": "application/json",
+        ...(token && { Authorization: `Bearer ${token}` }),
+        ...cabeceras,
+      },
       body: cuerpo === undefined ? undefined : JSON.stringify(cuerpo),
       signal,
     });
@@ -56,7 +60,7 @@ export function cliente(base) {
     pedir,
     async entrar(codigo) {
       const respuesta = await pedir("/api/entrar", { metodo: "POST", cuerpo: { codigo } });
-      cookie = respuesta.headers.get("set-cookie")?.split(";")[0] ?? "";
+      if (respuesta.ok) token = (await respuesta.clone().json()).token;
       return respuesta;
     },
     async investigar(tema, profundidad) {

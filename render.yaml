@@ -12,6 +12,9 @@ services:
         value: 0.0.0.0
       - key: CONFIAR_EN_PROXY
         value: "1"
+      # La copia de la página en GitHub Pages (.github/workflows/pagina.yml) usa esta API.
+      - key: ORIGENES_PERMITIDOS
+        value: https://franco944796.github.io
       # El disco de Render se borra en cada reinicio: con el secreto fijo acá, las sesiones
       # siguen valiendo después de que el servicio se duerme.
       - key: SECRETO_SESION

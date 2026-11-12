@@ -9,7 +9,8 @@
   "scripts": {
     "start": "node --env-file-if-exists=.env servidor.js",
     "dev": "node --env-file-if-exists=.env --watch servidor.js",
-    "test": "node --test"
+    "test": "node --test",
+    "pagina": "node scripts/pagina.js"
   },
   "dependencies": {
     "@mozilla/readability": "^0.6.0",

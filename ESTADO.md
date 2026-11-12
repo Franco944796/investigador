@@ -29,7 +29,17 @@ que la PC de Franco esté prendida, sin costo, con historial guardado por person
 - Diseño: tema oscuro; adaptado a celular. PDF como única descarga.
 - Acceso: código por persona; límite diario por persona (en memoria/archivo: se reinicia con el
   servidor, aceptado).
-- Repositorio propio en GitHub (lo sube Franco); tarjeta en `Franco944796.github.io` → Render.
+- Repositorio: https://github.com/Franco944796/investigador (público; commits y push los hace
+  Franco). Servicio en Render: https://investigador.onrender.com (Blueprint creado 2026-11-12).
+- La página se publica en GitHub Pages desde este repo (https://franco944796.github.io/investigador/)
+  y le habla a la API de Render por detrás. La de Render sigue funcionando igual.
+  - Sesión por token (`Authorization: Bearer`) guardado en localStorage con prefijo
+    `investigador-`; sin cookie (Safari bloquea cookies entre sitios).
+  - Render permite el origen de Pages con `ORIGENES_PERMITIDOS` (CORS, en `render.yaml`).
+  - `.github/workflows/pagina.yml` arma la copia con `scripts/pagina.js` (pone la dirección de la
+    API y una CSP en la página) y la publica en cada push a main.
+- Tarjeta en el portafolio: Principales, badge «En desarrollo», enlace a la página de Pages.
+  `ESTADO.md` del portafolio quedó borrado a propósito: no restaurarlo.
 
 ## Hecho (2026-11-11)
 
@@ -39,27 +49,31 @@ que la PC de Franco esté prendida, sin costo, con historial guardado por person
   respetó Excluir y Entrega.
 - Recorrido en navegador con simulación: investigar, recargar a mitad, reabrir desde el
   historial, terminar, detener, borrar; escritorio y celular sin errores.
-- 24 pruebas automáticas pasan (incluye Postgres real vía PGlite y reinicio del servidor).
 - 2026-11-12: Neon conectado (`DATABASE_URL` en `.env`; base `neondb`, región us-east-1, Postgres
   18). Almacén probado contra Neon: guardar, actualizar, listar, interrumpidas, borrar por dueño.
   `conectarPostgres` pasa `sslmode=require` a `verify-full` (evita el aviso de `pg`) y activa
   channel binding si la cadena lo pide: la cadena de Neon se pega tal cual.
+- 2026-11-12: prueba real Profunda con Neon: 15,3 min, 23 búsquedas, 37 fuentes leídas y 18
+  descartadas, sin esperas ni errores; informe de 18.700 caracteres con tabla, recomendación y
+  fuentes. Tras reiniciar el servidor: sigue en el historial, mismo texto y mismo PDF.
+- 2026-11-12: página para GitHub Pages (token, CORS, workflow, aviso «Despertando el servidor»
+  con reintento de lecturas, PDF descargado con el token). Probado en navegador desde otro
+  origen: entrar, investigar, PDF con nombre, recargar sin perder sesión, servidor caído y
+  vuelta, salir; sin errores. Tarjeta agregada al portafolio (+ arreglo del badge cortado en
+  celular, solo ≤480 px). 27 pruebas automáticas pasan.
 
 ## En curso
 
-- Investigación real Profunda contra Neon, luego reinicio y verificación de historial y PDF
-  (script en el scratchpad de la sesión, no forma parte del proyecto).
+- Esperando que Franco active Pages (Settings → Pages → Source: GitHub Actions) y haga push del
+  investigador y del portafolio.
 
 ## Pendiente
 
-1. Terminar la prueba real Profunda + reinicio (ver En curso).
-2. Franco: `git init`, commit y push a un repositorio nuevo de GitHub.
-3. Franco: en Render, New → Blueprint → elegir el repositorio; cargar en el panel
-   `CODIGOS_ACCESO`, `DATABASE_URL`, `TAVILY_CLAVE`, `LLM_1_CLAVE` (NVIDIA), `LLM_4_CLAVE`
-   (OpenRouter). Nunca en `render.yaml`.
-4. Verificar en Render: investigación larga sin que se duerma, reconexión, PDF, bloqueo por IP
+1. Franco: activar Pages en el repo; push del investigador y del portafolio.
+2. Comprobar que Render tomó `ORIGENES_PERMITIDOS` (Environment) y que el workflow publicó.
+3. Verificar desde https://franco944796.github.io/investigador/: entrar, investigación larga sin
+   que Render se duerma, reconexión, PDF, despertar tras 15 min, bloqueo por IP
    (`CONFIAR_EN_PROXY`), DuckDuckGo desde el servidor.
-5. Tarjeta del proyecto en `Franco944796.github.io` con la URL de Render.
 
 ## Archivos clave y comandos
 
@@ -72,6 +86,9 @@ que la PC de Franco esté prendida, sin costo, con historial guardado por person
   `DELETE …/:id`, `GET /api/informe/:id` (PDF), `GET /salud`.
 - `npm start` → http://127.0.0.1:3210 (lee `.env`). `npm test` → pruebas.
 - `node tests/simulacion.js` → página simulada en el puerto 3211 (código `codigo-de-prueba`).
+  Con `ORIGENES_PERMITIDOS=http://127.0.0.1:8090` y `npm run pagina -- <carpeta>/investigador
+  http://127.0.0.1:3211` servida en el 8090 se prueba la copia de Pages.
+- `src/vendor.js`: librerías de la página (las usan el servidor y `scripts/pagina.js`).
 
 ## Problemas conocidos y sin verificar
 
@@ -82,4 +99,10 @@ que la PC de Franco esté prendida, sin costo, con historial guardado por person
 - Créditos gratuitos de NVIDIA: no se sabe si se agotan.
 - OpenRouter gratis: 50 pedidos/día; es el último respaldo.
 - Los modelos gratuitos a veces citan una fuente que no corresponde.
+- El token en localStorage de franco944796.github.io lo pueden leer las otras páginas de ese
+  sitio (todas propias). La CSP de la copia de Pages limita a dónde se pueden mandar datos.
+- Sin verificar: cómo responde Render a un pedido entre sitios mientras despierta (la página
+  reintenta las lecturas por hasta 2 min; los POST no se reintentan).
 - DuckDuckGo suele bloquear pedidos desde servidores.
+- Local y Render comparten la base de Neon: al arrancar, cada servidor marca como "interrumpida"
+  lo que figure en curso, aunque lo esté corriendo el otro (se corrige en su próximo guardado).

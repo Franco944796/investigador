@@ -91,6 +91,24 @@ textarea {
   cursor: default;
 }
 
+.conexion {
+  position: fixed;
+  top: 12px;
+  left: 50%;
+  z-index: 10;
+  width: max-content;
+  max-width: calc(100% - 32px);
+  margin: 0;
+  padding: 8px 14px;
+  border: 1px solid var(--borde);
+  border-radius: 999px;
+  background: var(--superficie-alta);
+  color: var(--texto-suave);
+  font-size: 0.875rem;
+  text-align: center;
+  transform: translateX(-50%);
+}
+
 .error {
   margin: 0;
   color: var(--error);

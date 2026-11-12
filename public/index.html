@@ -5,11 +5,15 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="color-scheme" content="dark" />
     <meta name="theme-color" content="#0e1014" />
+    <meta name="api" content="" />
     <title>Investigador</title>
     <link rel="icon" href="data:," />
     <link rel="stylesheet" href="estilos.css" />
   </head>
   <body>
+    <p id="conexion" class="conexion" role="status" hidden>
+      Despertando el servidor (hasta un minuto)…
+    </p>
     <main id="entrada" class="entrada" hidden>
       <form id="formulario-entrada" class="tarjeta">
         <h1>Investigador</h1>
@@ -139,7 +143,7 @@ Fuentes: preferir oficiales y argentinas.</pre>
         <div class="informe"></div>
         <p class="aviso" role="alert" hidden></p>
         <div class="acciones" hidden>
-          <a class="boton descarga">Descargar PDF</a>
+          <button type="button" class="boton descarga">Descargar PDF</button>
         </div>
       </article>
     </template>

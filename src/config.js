@@ -67,6 +67,11 @@ export function leerConfig(env = process.env) {
     baseDeDatos: env.DATABASE_URL || "",
     // Render la define sola; sirve para que el servidor se visite y no se duerma mientras investiga.
     urlPublica: (env.URL_PUBLICA || env.RENDER_EXTERNAL_URL || "").replace(/\/+$/, ""),
+    // Sitios desde los que otra copia de la página puede usar la API (por ejemplo, GitHub Pages).
+    origenesPermitidos: (env.ORIGENES_PERMITIDOS || "")
+      .split(",")
+      .map((origen) => origen.trim().replace(/\/+$/, "").toLowerCase())
+      .filter(Boolean),
     profundidades: leerProfundidades(env),
     // PORT es el nombre que imponen los hostings (Render entre ellos).
     puerto: entero(env, "PUERTO", entero(env, "PORT", 3210)),

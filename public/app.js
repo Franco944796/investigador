@@ -1,6 +1,10 @@
 const { marked, DOMPurify } = globalThis;
 const $ = (selector) => document.querySelector(selector);
 
+// Vacío cuando la página la sirve el mismo servidor; scripts/pagina.js pone la dirección de Render
+// en la copia que se publica en GitHub Pages.
+const API = $('meta[name="api"]').content;
+
 const entrada = $("#entrada");
 const app = $("#app");
 const mensajes = $("#mensajes");
@@ -45,29 +49,70 @@ const pausa = (ms, signal) =>
     });
   });
 
-// Preferencia de cada visitante; si el navegador bloquea el almacenamiento, se usa Normal.
-function leerPreferencia() {
+// En GitHub Pages el almacenamiento lo comparten todos los proyectos del sitio: las claves llevan
+// prefijo. Si el navegador lo bloquea, la sesión dura hasta recargar y la profundidad vuelve a
+// Normal.
+function leerGuardado(clave) {
   try {
-    return localStorage.getItem("profundidad") ?? "normal";
+    return localStorage.getItem(`investigador-${clave}`);
   } catch {
-    return "normal";
+    return null;
   }
 }
 
-function guardarPreferencia(valor) {
+function guardarDato(clave, valor) {
   try {
-    localStorage.setItem("profundidad", valor);
-  } catch {
-    // Sin almacenamiento solo se pierde el recuerdo de la elección.
+    if (valor === null) localStorage.removeItem(`investigador-${clave}`);
+    else localStorage.setItem(`investigador-${clave}`, valor);
+  } catch {}
+}
+
+let token = leerGuardado("token");
+
+function olvidarSesion() {
+  token = null;
+  guardarDato("token", null);
+}
+
+const cabeceras = (extra = {}) => (token ? { ...extra, Authorization: `Bearer ${token}` } : extra);
+
+// Render apaga el servidor gratuito tras 15 min sin uso y tarda hasta un minuto en despertar.
+// Solo se reintentan las lecturas: repetir un POST podría lanzar dos veces la misma investigación.
+let pedidosLentos = 0;
+
+async function conEspera(hacer, reintentar) {
+  let lento = false;
+  const reloj = setTimeout(() => {
+    lento = true;
+    $("#conexion").hidden = ++pedidosLentos === 0;
+  }, 3000);
+  try {
+    for (let intento = 1; ; intento++) {
+      try {
+        const respuesta = await hacer();
+        const caido = [502, 503, 504].includes(respuesta.status);
+        if (!reintentar || !caido || intento >= 40) return respuesta;
+      } catch {
+        if (!reintentar || intento >= 40) {
+          throw new Error("No se pudo conectar con el servidor. Probá de nuevo en un momento.");
+        }
+      }
+      await pausa(3000);
+    }
+  } finally {
+    clearTimeout(reloj);
+    if (lento) $("#conexion").hidden = --pedidosLentos === 0;
   }
 }
 
 async function pedir(ruta, { metodo = "GET", cuerpo } = {}) {
-  const respuesta = await fetch(ruta, {
+  const opciones = {
     method: metodo,
-    headers: cuerpo === undefined ? {} : { "Content-Type": "application/json" },
+    headers: cabeceras(cuerpo === undefined ? {} : { "Content-Type": "application/json" }),
     body: cuerpo === undefined ? undefined : JSON.stringify(cuerpo),
-  });
+  };
+  const respuesta = await conEspera(() => fetch(API + ruta, opciones), metodo === "GET");
+  if (respuesta.status === 401) olvidarSesion();
   const datos = respuesta.status === 204 ? {} : await respuesta.json().catch(() => ({}));
   if (!respuesta.ok) {
     throw Object.assign(new Error(datos.error || "No se pudo completar el pedido."), {
@@ -305,8 +350,8 @@ function agregarRespuesta() {
           cerrar("lista", datos.pdf ? "Investigación terminada" : "Respuesta lista", datos.hora);
           if (datos.pdf) {
             const descarga = nodo.querySelector(".descarga");
-            descarga.href = `/api/informe/${estado.conversacion}`;
-            descarga.download = "";
+            const id = estado.conversacion;
+            descarga.onclick = () => descargarPDF(id, descarga, aviso);
             nodo.querySelector(".acciones").hidden = false;
           }
           mostrarUso(datos.uso);
@@ -320,6 +365,33 @@ function agregarRespuesta() {
     },
   };
   return vista;
+}
+
+// La descarga necesita el token en la cabecera, así que no alcanza con un enlace al PDF.
+async function descargarPDF(id, boton, aviso) {
+  boton.disabled = true;
+  aviso.hidden = true;
+  try {
+    const pedido = () => fetch(`${API}/api/informe/${id}`, { headers: cabeceras() });
+    const respuesta = await conEspera(pedido, true);
+    if (!respuesta.ok) {
+      const { error } = await respuesta.json().catch(() => ({}));
+      throw new Error(error || "No se pudo descargar el PDF.");
+    }
+    const disposicion = respuesta.headers.get("Content-Disposition") ?? "";
+    const nombre = disposicion.match(/filename="([^"]+)"/)?.[1] ?? "informe.pdf";
+    const url = URL.createObjectURL(await respuesta.blob());
+    const enlace = Object.assign(document.createElement("a"), { href: url, download: nombre });
+    document.body.append(enlace);
+    enlace.click();
+    enlace.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  } catch (fallo) {
+    aviso.textContent = fallo.message;
+    aviso.hidden = false;
+  } finally {
+    boton.disabled = false;
+  }
 }
 
 async function* leerFlujo(respuesta) {
@@ -372,8 +444,14 @@ function procesar({ tipo, datos }) {
 async function escuchar(id, control) {
   for (let intento = 0; !control.signal.aborted; intento++) {
     try {
-      const respuesta = await fetch(`/api/conversaciones/${id}/eventos`, { signal: control.signal });
-      if (respuesta.status === 401) return mostrarEntrada();
+      const respuesta = await fetch(`${API}/api/conversaciones/${id}/eventos`, {
+        headers: cabeceras(),
+        signal: control.signal,
+      });
+      if (respuesta.status === 401) {
+        olvidarSesion();
+        return mostrarEntrada();
+      }
       if (respuesta.status === 404) {
         irAlInicio();
         return mostrarAviso("Esa investigación ya no existe.");
@@ -471,7 +549,13 @@ $("#formulario-entrada").addEventListener("submit", async (evento) => {
   const error = $("#error-entrada");
   error.hidden = true;
   try {
-    mostrarApp(await pedir("/api/entrar", { metodo: "POST", cuerpo: { codigo: $("#codigo").value } }));
+    const sesion = await pedir("/api/entrar", {
+      metodo: "POST",
+      cuerpo: { codigo: $("#codigo").value },
+    });
+    token = sesion.token;
+    guardarDato("token", token);
+    mostrarApp(sesion);
     $("#codigo").value = "";
   } catch (fallo) {
     error.textContent = fallo.message;
@@ -546,20 +630,32 @@ $("#plantilla").addEventListener("click", () => {
   texto.setSelectionRange(finDePregunta, finDePregunta);
 });
 
-const elegida = document.querySelector(`input[name="profundidad"][value="${leerPreferencia()}"]`);
+const elegida = document.querySelector(
+  `input[name="profundidad"][value="${leerGuardado("profundidad") ?? "normal"}"]`,
+);
 if (elegida) elegida.checked = true;
-$("#profundidades").addEventListener("change", (evento) => guardarPreferencia(evento.target.value));
+$("#profundidades").addEventListener("change", (evento) =>
+  guardarDato("profundidad", evento.target.value),
+);
 
 $("#nueva").addEventListener("click", irAlInicio);
 
-$("#salir").addEventListener("click", async () => {
+$("#salir").addEventListener("click", () => {
   estado.flujo?.abort();
-  await pedir("/api/salir", { metodo: "POST", cuerpo: {} }).catch(() => {});
+  olvidarSesion();
   location.reload();
 });
 
-try {
-  mostrarApp(await pedir("/api/sesion"));
-} catch {
+if (!token) {
   mostrarEntrada();
+} else {
+  try {
+    mostrarApp(await pedir("/api/sesion"));
+  } catch (fallo) {
+    mostrarEntrada();
+    if (fallo.estado !== 401) {
+      $("#error-entrada").textContent = fallo.message;
+      $("#error-entrada").hidden = false;
+    }
+  }
 }

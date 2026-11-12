@@ -4,8 +4,8 @@ import express from "express";
 import { crearConversacion, ErrorInvestigacion } from "./investigador.js";
 import { ErrorLLM } from "./llm.js";
 import { nombreDeArchivo, tituloDelPedido } from "./pdf.js";
+import { VENDOR } from "./vendor.js";
 
-const COOKIE = "sesion";
 const LATIDO_MS = 15000;
 const MAX_TEXTO = 2000;
 const GUARDADO_MS = 30000;
@@ -22,13 +22,9 @@ const POLITICA_DE_CONTENIDO = [
   "frame-ancestors 'none'",
 ].join("; ");
 
-function leerCookie(req, nombre) {
-  for (const parte of (req.headers.cookie ?? "").split(";")) {
-    const [clave, ...valor] = parte.trim().split("=");
-    if (clave === nombre) return valor.join("=");
-  }
-  return null;
-}
+// Token en una cabecera y no en una cookie: la página también se publica en GitHub Pages, otro
+// sitio, y Safari bloquea las cookies entre sitios distintos.
+const leerToken = (req) => req.get("authorization")?.match(/^Bearer (.+)$/)?.[1] ?? null;
 
 function textoValido(valor) {
   const texto = typeof valor === "string" ? valor.trim() : "";
@@ -260,18 +256,30 @@ export function crearApp({ config, acceso, investigadores, almacen, generarPDF }
     });
     next();
   });
+  app.use((req, res, next) => {
+    res.vary("Origin");
+    const origen = req.get("origin")?.toLowerCase();
+    if (origen && config.origenesPermitidos.includes(origen)) {
+      res.set({
+        "Access-Control-Allow-Origin": origen,
+        "Access-Control-Allow-Headers": "Authorization, Content-Type",
+        "Access-Control-Allow-Methods": "GET, POST, DELETE",
+        "Access-Control-Expose-Headers": "Content-Disposition",
+        "Access-Control-Max-Age": "600",
+      });
+    }
+    if (req.method === "OPTIONS") return res.sendStatus(204);
+    next();
+  });
   app.use(express.json({ limit: "20kb" }));
   app.use(express.static(ruta("../public")));
-  app.get("/vendor/marked.js", (req, res) =>
-    res.sendFile(ruta("../node_modules/marked/lib/marked.umd.js")),
-  );
-  app.get("/vendor/purify.js", (req, res) =>
-    res.sendFile(ruta("../node_modules/dompurify/dist/purify.min.js")),
-  );
+  for (const [nombre, archivo] of Object.entries(VENDOR)) {
+    app.get(`/vendor/${nombre}`, (req, res) => res.sendFile(ruta(`../${archivo}`)));
+  }
   app.get("/salud", (req, res) => res.type("text").send("ok"));
 
   const exigirSesion = (req, res, next) => {
-    req.persona = acceso.verificar(leerCookie(req, COOKIE));
+    req.persona = acceso.verificar(leerToken(req));
     if (!req.persona) return res.status(401).json({ error: "Ingresá tu código de acceso." });
     next();
   };
@@ -279,24 +287,12 @@ export function crearApp({ config, acceso, investigadores, almacen, generarPDF }
   const datosDeSesion = (persona) => ({ nombre: persona.nombre, uso: acceso.uso(persona) });
 
   app.post("/api/entrar", (req, res) => {
-    const { persona, token, duracionMs, bloqueado } = acceso.entrar(req.body?.codigo, req.ip);
+    const { persona, token, bloqueado } = acceso.entrar(req.body?.codigo, req.ip);
     if (bloqueado) {
       return res.status(429).json({ error: "Demasiados intentos. Esperá unos minutos." });
     }
     if (!persona) return res.status(401).json({ error: "Código incorrecto." });
-    res.cookie(COOKIE, token, {
-      httpOnly: true,
-      sameSite: "strict",
-      secure: req.secure,
-      maxAge: duracionMs,
-      encode: String,
-    });
-    res.json(datosDeSesion(persona));
-  });
-
-  app.post("/api/salir", (req, res) => {
-    res.clearCookie(COOKIE);
-    res.json({});
+    res.json({ ...datosDeSesion(persona), token });
   });
 
   app.get("/api/sesion", exigirSesion, (req, res) => res.json(datosDeSesion(req.persona)));
