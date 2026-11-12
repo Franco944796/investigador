@@ -52,12 +52,16 @@ function leerProfundidades(env) {
       consultasPorRonda: 4,
       maxFuentes: 50,
     },
+    // Hasta 25 + 9 × 8 = 97 búsquedas de Tavily (se cobra por búsqueda, no por resultado).
     exhaustiva: {
-      consultasIniciales: 10,
-      resultadosPorConsulta: 5,
-      rondasExtra: 7,
-      consultasPorRonda: 5,
-      maxFuentes: 100,
+      consultasIniciales: 25,
+      resultadosPorConsulta: 8,
+      rondasExtra: 9,
+      consultasPorRonda: 8,
+      maxFuentes: 300,
+      multilingue: true,
+      informePorSecciones: true,
+      irrelevantesSeguidas: 15,
     },
   };
 }

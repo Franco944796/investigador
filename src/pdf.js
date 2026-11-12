@@ -39,11 +39,16 @@ const SUSTITUTOS = {
   "☆": "*",
 };
 
+// Saltos de línea y tabulaciones no tienen glifo, pero sin ellos el Markdown queda en una sola línea.
+const SIN_GLIFO_PERO_NECESARIOS = new Set(["\n", "\r", "\t"]);
+
 export function aptoParaPDF(texto) {
   return [...texto]
-    .map((caracter) =>
-      ROBOTO.hasGlyphForCodePoint(caracter.codePointAt(0)) ? caracter : (SUSTITUTOS[caracter] ?? ""),
-    )
+    .map((caracter) => {
+      if (SIN_GLIFO_PERO_NECESARIOS.has(caracter)) return caracter;
+      if (ROBOTO.hasGlyphForCodePoint(caracter.codePointAt(0))) return caracter;
+      return SUSTITUTOS[caracter] ?? (/\s/.test(caracter) ? " " : "");
+    })
     .join("");
 }
 
@@ -57,7 +62,10 @@ const decodificar = (texto) =>
 
 function conCitas(texto, estilo, urls) {
   if (estilo.link) return [{ ...estilo, text: texto }];
+  // Citas pegadas ("[5][18][22]") serían una sola palabra que pdfmake no puede cortar, y en
+  // tablas angostas empujan la columna fuera de la hoja.
   return texto
+    .replace(/\](?=\[\d+\])/g, "] ")
     .split(/(\[\d+\])/)
     .filter(Boolean)
     .map((parte) => {
@@ -95,6 +103,19 @@ function tramos(tokens, estilo, urls) {
   });
 }
 
+// Igual que "lightHorizontalLines" de pdfmake, pero con el relleno lateral elegido (el original
+// usa 8 puntos por lado, demasiado para tablas anchas).
+const lineasHorizontales = (relleno) => ({
+  hLineWidth: (i, nodo) => {
+    if (i === 0 || i === nodo.table.body.length) return 0;
+    return i === nodo.table.headerRows ? 2 : 1;
+  },
+  vLineWidth: () => 0,
+  hLineColor: (i) => (i === 1 ? "black" : "#aaaaaa"),
+  paddingLeft: (i) => (i === 0 ? 0 : relleno),
+  paddingRight: (i, nodo) => (i === nodo.table.widths.length - 1 ? 0 : relleno),
+});
+
 function bloques(tokens, urls) {
   return tokens.flatMap((token) => {
     switch (token.type) {
@@ -122,18 +143,22 @@ function bloques(tokens, urls) {
       case "table": {
         const fila = (celdas, extra) =>
           celdas.map((celda) => ({ text: tramos(celda.tokens, {}, urls), ...extra }));
+        const columnas = token.header.length;
         return [
           {
             table: {
               headerRows: 1,
-              widths: token.header.map(() => "*"),
+              // Con "*" pdfmake da a todas las columnas el ancho de la palabra más larga de la
+              // tabla; con muchas columnas eso se sale de la hoja. "auto" reparte según el contenido.
+              widths: token.header.map(() => (columnas >= 5 ? "auto" : "*")),
               body: [
                 fila(token.header, { bold: true, fillColor: "#eeeeee" }),
                 ...token.rows.map((celdas) => fila(celdas)),
               ],
             },
-            layout: "lightHorizontalLines",
-            fontSize: 9,
+            layout: lineasHorizontales(columnas >= 5 ? 3 : 6),
+            // pdfmake no corta palabras: con muchas columnas, letra más chica para que entren.
+            fontSize: columnas >= 7 ? 7.5 : columnas >= 5 ? 8.5 : 9,
             margin: [0, 2, 0, 10],
           },
         ];

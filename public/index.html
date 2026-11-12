@@ -26,90 +26,131 @@
     </main>
 
     <div id="app" class="app" hidden>
-      <header class="barra">
-        <strong class="marca">Investigador</strong>
-        <span id="uso" class="uso"></span>
-        <button id="nueva" type="button" class="boton">Nueva investigación</button>
-        <button id="salir" type="button" class="boton discreto">Salir</button>
-      </header>
+      <aside id="panel" class="panel" aria-label="Tus investigaciones">
+        <div class="panel-cabeza">
+          <strong class="marca">Investigador</strong>
+          <button
+            id="cerrar-panel"
+            type="button"
+            class="icono"
+            aria-label="Cerrar el panel"
+            title="Cerrar el panel"
+          >
+            <span class="solo-escritorio"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16" /></svg></span>
+            <span class="solo-celular"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg></span>
+          </button>
+        </div>
+        <button type="button" class="boton nueva accion-nueva"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg> Nueva investigación</button>
+        <h2 class="panel-titulo">Tus investigaciones</h2>
+        <div class="panel-lista">
+          <ul id="lista" class="lista"></ul>
+          <p id="lista-vacia" class="lista-vacia" hidden>Todavía no hiciste ninguna.</p>
+        </div>
+        <div class="panel-pie">
+          <div class="cuenta">
+            <span id="nombre" class="nombre"></span>
+            <span id="uso" class="uso"></span>
+          </div>
+          <button id="salir" type="button" class="boton discreto">Salir</button>
+        </div>
+      </aside>
 
-      <section id="mensajes" class="mensajes" aria-live="polite">
-        <div id="vacio" class="vacio">
-          <h1>¿Qué querés investigar?</h1>
-          <p>
-            Busco en la web, leo las fuentes y te entrego un informe con citas. Podés cerrar la
-            página mientras investigo: queda guardado en tu historial, con el informe en PDF.
-          </p>
+      <nav class="franja" aria-label="Panel cerrado">
+        <button type="button" class="icono accion-abrir" aria-label="Abrir el panel" title="Abrir el panel">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16" /></svg>
+        </button>
+        <button
+          type="button"
+          class="icono accion-nueva"
+          aria-label="Nueva investigación"
+          title="Nueva investigación"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+        </button>
+      </nav>
 
-          <section id="historial" class="historial" aria-labelledby="titulo-historial" hidden>
-            <h2 id="titulo-historial">Tus investigaciones</h2>
-            <ul id="lista" class="lista"></ul>
-          </section>
+      <div id="velo" class="velo"></div>
 
-          <section class="guia" aria-labelledby="titulo-guia">
-            <h2 id="titulo-guia">Para mejores resultados, incluí</h2>
-            <dl class="campos">
-              <div>
-                <dt>Pregunta</dt>
-                <dd>Qué querés saber o decidir.</dd>
+      <div class="columna">
+        <header class="barra">
+          <button type="button" class="icono accion-abrir" aria-label="Abrir el panel"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" /></svg></button>
+          <strong class="marca">Investigador</strong>
+          <button type="button" class="icono accion-nueva" aria-label="Nueva investigación"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg></button>
+        </header>
+
+        <section id="mensajes" class="mensajes" aria-live="polite">
+          <div id="vacio" class="vacio">
+            <h1>¿Qué querés investigar?</h1>
+            <p>
+              Busco en la web, leo las fuentes y te entrego un informe con citas. Podés cerrar la
+              página mientras investigo: queda guardado en tu historial, con el informe en PDF.
+            </p>
+
+            <section class="guia" aria-labelledby="titulo-guia">
+              <h2 id="titulo-guia">Para mejores resultados, incluí</h2>
+              <dl class="campos">
+                <div>
+                  <dt>Pregunta</dt>
+                  <dd>Qué querés saber o decidir.</dd>
+                </div>
+                <div>
+                  <dt>Contexto</dt>
+                  <dd>Lugar, fecha y tu situación.</dd>
+                </div>
+                <div>
+                  <dt>Aspectos</dt>
+                  <dd>Los puntos que tiene que cubrir.</dd>
+                </div>
+                <div>
+                  <dt>Excluir</dt>
+                  <dd>Lo que no te interesa.</dd>
+                </div>
+                <div>
+                  <dt>Entrega</dt>
+                  <dd>Formato: tabla, recomendación, nivel técnico.</dd>
+                </div>
+                <div>
+                  <dt>Fuentes</dt>
+                  <dd>Oficiales, académicas, de un país o idioma.</dd>
+                </div>
+              </dl>
+              <div class="guia-acciones">
+                <button id="plantilla" type="button" class="boton">Usar plantilla</button>
+                <p class="nota">Solo la pregunta es obligatoria. Con la plantilla, Enter hace salto de línea: enviá con el botón o con Ctrl+Enter.</p>
               </div>
-              <div>
-                <dt>Contexto</dt>
-                <dd>Lugar, fecha y tu situación.</dd>
-              </div>
-              <div>
-                <dt>Aspectos</dt>
-                <dd>Los puntos que tiene que cubrir.</dd>
-              </div>
-              <div>
-                <dt>Excluir</dt>
-                <dd>Lo que no te interesa.</dd>
-              </div>
-              <div>
-                <dt>Entrega</dt>
-                <dd>Formato: tabla, recomendación, nivel técnico.</dd>
-              </div>
-              <div>
-                <dt>Fuentes</dt>
-                <dd>Oficiales, académicas, de un país o idioma.</dd>
-              </div>
-            </dl>
-            <div class="guia-acciones">
-              <button id="plantilla" type="button" class="boton">Usar plantilla</button>
-              <p class="nota">Solo la pregunta es obligatoria. Con la plantilla, Enter hace salto de línea: enviá con el botón o con Ctrl+Enter.</p>
-            </div>
-            <p class="ejemplo-titulo">Ejemplo</p>
-            <pre class="ejemplo">Pregunta: ¿Conviene instalar paneles solares en mi casa?
+              <p class="ejemplo-titulo">Ejemplo</p>
+              <pre class="ejemplo">Pregunta: ¿Conviene instalar paneles solares en mi casa?
 Contexto: casa en Córdoba, 450 kWh/mes, techo de chapa al norte, 2026.
 Aspectos: costo llave en mano, ahorro, recupero, financiamiento, trámites.
 Excluir: sistemas aislados con baterías.
 Entrega: tabla comparativa de 3 tamaños y una recomendación.
 Fuentes: preferir oficiales y argentinas.</pre>
-          </section>
-        </div>
-      </section>
+            </section>
+          </div>
+        </section>
 
-      <form id="redactor" class="redactor">
-        <div id="profundidades" class="profundidades" role="radiogroup" aria-label="Profundidad">
-          <label>
-            <input type="radio" name="profundidad" value="normal" checked />
-            <span>Normal<small><span class="cantidad">~20 fuentes · </span>~10 min</small></span>
-          </label>
-          <label>
-            <input type="radio" name="profundidad" value="profunda" />
-            <span>Profunda<small><span class="cantidad">~50 fuentes · </span>~1 h</small></span>
-          </label>
-          <label>
-            <input type="radio" name="profundidad" value="exhaustiva" />
-            <span>Exhaustiva<small><span class="cantidad">~100 fuentes · </span>horas</small></span>
-          </label>
-        </div>
-        <p id="aviso-redactor" class="aviso-redactor" role="alert" hidden></p>
-        <div class="fila">
-          <textarea id="texto" rows="1" maxlength="2000" aria-label="Mensaje"></textarea>
-          <button id="enviar" type="submit" class="boton principal">Investigar</button>
-        </div>
-      </form>
+        <form id="redactor" class="redactor">
+          <div id="profundidades" class="profundidades" role="radiogroup" aria-label="Profundidad">
+            <label>
+              <input type="radio" name="profundidad" value="normal" checked />
+              <span>Normal<small><span class="cantidad">~20 fuentes · </span>~10 min</small></span>
+            </label>
+            <label>
+              <input type="radio" name="profundidad" value="profunda" />
+              <span>Profunda<small><span class="cantidad">~40 fuentes · </span>15–60 min</small></span>
+            </label>
+            <label>
+              <input type="radio" name="profundidad" value="exhaustiva" />
+              <span>Exhaustiva<small><span class="cantidad">hasta 300 fuentes · </span>horas</small></span>
+            </label>
+          </div>
+          <p id="aviso-redactor" class="aviso-redactor" role="alert" hidden></p>
+          <div class="fila">
+            <textarea id="texto" rows="1" maxlength="2000" aria-label="Mensaje"></textarea>
+            <button id="enviar" type="submit" class="boton principal">Investigar</button>
+          </div>
+        </form>
+      </div>
     </div>
 
     <template id="plantilla-item">
@@ -118,7 +159,9 @@ Fuentes: preferir oficiales y argentinas.</pre>
           <span class="item-titulo"></span>
           <span class="item-meta"></span>
         </button>
-        <button type="button" class="boton discreto borrar">Borrar</button>
+        <button type="button" class="icono borrar" aria-label="Borrar" title="Borrar">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3" /></svg>
+        </button>
       </li>
     </template>
 

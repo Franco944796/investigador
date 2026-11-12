@@ -20,8 +20,33 @@ Resumen breve del tema con una cita [1].
 
 const SEGUIMIENTO = "Según el informe, la opción B duplica a la A [2].";
 
+const PLAN_MULTILINGUE = {
+  idiomas: [
+    { codigo: "es", nombre: "español" },
+    { codigo: "en", nombre: "inglés" },
+    { codigo: "zh", nombre: "chino" },
+  ],
+  consultas: [
+    { idioma: "es", texto: "primera consulta" },
+    { idioma: "en", texto: "second query" },
+    { idioma: "zh", texto: "第三 查询" },
+  ],
+};
+
+const INDICE = {
+  titulo: "Informe de prueba",
+  secciones: [{ titulo: "Comparación", enfoque: "datos de cada opción", fuentes: [1, 2] }],
+};
+
 function responder(cuerpo, estado) {
   const ultimo = cuerpo.messages.at(-1).content;
+  if (ultimo.includes('"idiomas"')) return JSON.stringify(PLAN_MULTILINGUE);
+  if (ultimo.includes('"secciones"')) return JSON.stringify(INDICE);
+  if (ultimo.includes("Te toca la sección")) {
+    return "## Comparación\n\n| Opción | Dato |\n| --- | --- |\n| A | 10 [1] |\n| B | 20 [2] |";
+  }
+  if (ultimo.includes("comienzo del informe")) return "# Informe de prueba\n\n## Resumen\n\nResumen breve [1].";
+  if (ultimo.includes("cierre del informe")) return "## Conclusiones\n\n- Punto **importante** [2].";
   if (ultimo.includes('{"consultas": [')) {
     return '```json\n{"consultas": ["primera consulta", "segunda consulta"]}\n```';
   }

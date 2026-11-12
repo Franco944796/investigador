@@ -18,6 +18,7 @@ const estado = {
   vista: null,
   ocupada: false,
   conInforme: false,
+  enVivo: false,
   flujo: null,
 };
 
@@ -135,8 +136,39 @@ function mostrarAviso(mensaje) {
 function mostrarApp(sesion) {
   entrada.hidden = true;
   app.hidden = false;
+  $("#nombre").textContent = sesion.nombre;
   mostrarUso(sesion.uso);
   irAlInicio();
+}
+
+// En escritorio el panel ocupa su lugar y se recuerda si quedó cerrado; en celular es un cajón
+// que se abre encima y arranca siempre cerrado.
+const escritorio = matchMedia("(min-width: 769px)");
+
+function abrirPanel() {
+  if (escritorio.matches) {
+    app.classList.remove("panel-cerrado");
+    guardarDato("panel", null);
+  } else {
+    app.classList.add("cajon-abierto");
+    $("#cerrar-panel").focus();
+  }
+}
+
+function cerrarPanel() {
+  if (!escritorio.matches) return cerrarCajon();
+  app.classList.add("panel-cerrado");
+  guardarDato("panel", "cerrado");
+}
+
+function cerrarCajon() {
+  app.classList.remove("cajon-abierto");
+}
+
+function marcarActiva() {
+  for (const fila of $("#lista").children) {
+    fila.classList.toggle("activa", fila.dataset.id === estado.conversacion);
+  }
 }
 
 function mostrarEntrada() {
@@ -329,8 +361,13 @@ function agregarRespuesta() {
         }
         if (tipo === "etapa") etapa.textContent = datos.texto;
         if (tipo === "espera") etapa.textContent = `Esperando cupo del proveedor (${datos.segundos} s)`;
+        if (tipo === "aviso") agregarPaso("advertencia", datos.texto);
         if (tipo === "consulta") {
-          agregarPaso("consulta", datos.texto);
+          const paso = agregarPaso("consulta", datos.texto);
+          if (datos.idioma) {
+            paso.dataset.idioma = datos.idioma;
+            paso.lang = datos.idioma;
+          }
           busquedas++;
           contar();
         }
@@ -417,6 +454,7 @@ function limpiarMensajes() {
   estado.vista = null;
   estado.ocupada = false;
   estado.conInforme = false;
+  estado.enVivo = false;
 }
 
 function procesar({ tipo, datos }) {
@@ -425,6 +463,7 @@ function procesar({ tipo, datos }) {
     estado.vista = agregarRespuesta();
     estado.ocupada = true;
   } else if (tipo === "listo") {
+    estado.enVivo = true;
     // Si el servidor no la tiene en curso pero el último turno no terminó, se reinició a mitad.
     estado.ocupada = datos.ocupada;
     if (!datos.ocupada && estado.vista && !estado.vista.terminada) {
@@ -433,7 +472,11 @@ function procesar({ tipo, datos }) {
     mensajes.scrollTop = mensajes.scrollHeight;
   } else {
     estado.vista?.recibir({ tipo, datos });
-    if (TERMINALES.has(tipo)) estado.ocupada = false;
+    if (TERMINALES.has(tipo)) {
+      estado.ocupada = false;
+      // Solo los finales en vivo cambian el estado en la lista; los repetidos al conectar, no.
+      if (estado.enVivo) cargarHistorial();
+    }
     if (tipo === "fin" && datos.pdf) estado.conInforme = true;
   }
   actualizarRedactor();
@@ -475,6 +518,7 @@ function abrirConversacion(id) {
   mostrarAviso("");
   estado.conversacion = id;
   vacio.hidden = true;
+  marcarActiva();
   estado.flujo = new AbortController();
   escuchar(id, estado.flujo);
   actualizarRedactor();
@@ -487,6 +531,7 @@ function irAlInicio() {
   limpiarMensajes();
   vacio.hidden = false;
   mensajes.scrollTop = 0;
+  marcarActiva();
   actualizarRedactor();
   cargarHistorial();
   texto.focus();
@@ -514,21 +559,26 @@ async function cargarHistorial() {
     if (error.estado === 401) mostrarEntrada();
     return;
   }
-  if (estado.conversacion) return;
   const lista = $("#lista");
   lista.replaceChildren(
     ...items.map((item) => {
       const fila = clonar("#plantilla-item");
+      fila.dataset.id = item.id;
       fila.dataset.estado = item.estado;
       fila.querySelector(".item-titulo").textContent = item.titulo;
       fila.querySelector(".item-meta").textContent = describir(item);
-      fila.querySelector(".abrir").addEventListener("click", () => abrirConversacion(item.id));
+      fila.querySelector(".abrir").title = item.titulo;
+      fila.querySelector(".abrir").addEventListener("click", () => {
+        cerrarCajon();
+        abrirConversacion(item.id);
+      });
       const borrar = fila.querySelector(".borrar");
       borrar.hidden = item.estado === "en-curso";
       borrar.addEventListener("click", async () => {
         if (!confirm("¿Borrar esta investigación? No se puede deshacer.")) return;
         try {
           await pedir(`/api/conversaciones/${item.id}`, { metodo: "DELETE" });
+          if (item.id === estado.conversacion) irAlInicio();
         } catch (error) {
           mostrarAviso(error.message);
         }
@@ -537,11 +587,12 @@ async function cargarHistorial() {
       return fila;
     }),
   );
-  $("#historial").hidden = !items.length;
+  $("#lista-vacia").hidden = items.length > 0;
+  marcarActiva();
 }
 
 setInterval(() => {
-  if (!app.hidden && !estado.conversacion) cargarHistorial();
+  if (!app.hidden) cargarHistorial();
 }, 30000);
 
 $("#formulario-entrada").addEventListener("submit", async (evento) => {
@@ -594,6 +645,7 @@ $("#redactor").addEventListener("submit", async (evento) => {
       });
       mostrarUso(uso);
       abrirConversacion(conversacion);
+      cargarHistorial();
     }
     texto.value = "";
     ajustarAltura();
@@ -638,7 +690,22 @@ $("#profundidades").addEventListener("change", (evento) =>
   guardarDato("profundidad", evento.target.value),
 );
 
-$("#nueva").addEventListener("click", irAlInicio);
+if (leerGuardado("panel") === "cerrado") app.classList.add("panel-cerrado");
+for (const boton of document.querySelectorAll(".accion-abrir")) {
+  boton.addEventListener("click", abrirPanel);
+}
+for (const boton of document.querySelectorAll(".accion-nueva")) {
+  boton.addEventListener("click", () => {
+    cerrarCajon();
+    irAlInicio();
+  });
+}
+$("#cerrar-panel").addEventListener("click", cerrarPanel);
+$("#velo").addEventListener("click", cerrarCajon);
+escritorio.addEventListener("change", cerrarCajon);
+document.addEventListener("keydown", (evento) => {
+  if (evento.key === "Escape") cerrarCajon();
+});
 
 $("#salir").addEventListener("click", () => {
   estado.flujo?.abort();

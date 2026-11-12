@@ -18,8 +18,10 @@ que la PC de Franco esté prendida, sin costo, con historial guardado por person
   30 días), Supabase (pausa a la semana).
 - Investigación en segundo plano: se puede cerrar la página; la página se reconecta y repite el
   progreso. Detener cancela en el servidor (también si está en cola).
-- Profundidad elegible por pedido: Normal (~24 fuentes, ~11 búsquedas), Profunda (~50, ~24),
-  Exhaustiva (~100, ~45). Tavily: 1.000 búsquedas/mes para todos.
+- Profundidad elegible por pedido: Normal (~24 fuentes, ~11 búsquedas), Profunda (~40 leídas de
+  tope 50, ~24; etiqueta «~40 fuentes · 15–60 min»),
+  Exhaustiva (hasta 300, ~97; ver abajo). Tavily: 1.000 búsquedas/mes para todos; Franco acepta
+  que una Exhaustiva gaste ~100 (la calidad importa más que la cantidad de investigaciones).
 - Modelos (orden): NVIDIA Nemotron 3 Ultra → Mistral Large 4 → GPT-OSS 20B (~2,5 min) → GLM 5.3
   Flash (~5 min) → OpenRouter Nemotron 3 Ultra `:free`. Límite por pedido 30 min. Kimi K2.6 (404
   para la cuenta) y DeepSeek V4.1 Flash (error 500 / sin respuesta) no sirven.
@@ -38,6 +40,23 @@ que la PC de Franco esté prendida, sin costo, con historial guardado por person
   - Render permite el origen de Pages con `ORIGENES_PERMITIDOS` (CORS, en `render.yaml`).
   - `.github/workflows/pagina.yml` arma la copia con `scripts/pagina.js` (pone la dirección de la
     API y una CSP en la página) y la publica en cada push a main.
+- Panel lateral de investigaciones (pedido 2026-11-12), como el de Claude:
+  - Escritorio: abierto al entrar, corre el chat; cerrado queda una franja con abrir y nueva.
+    Recuerda abierto/cerrado (localStorage).
+  - Celular: cerrado; ☰ lo abre encima con fondo oscurecido; se cierra al elegir, tocar afuera o ✕.
+  - Contenido: «Nueva investigación» arriba, lista (estado, fecha, Borrar), abajo uso del día y
+    «Salir». La lista sale del inicio (queda guía + cuadro para escribir).
+- Cuadro de escritura con borde celeste (acento) y resplandor, más intenso al escribir (como el
+  chat de Claude Code).
+- Exhaustiva (pedido 2026-11-12):
+  - Busca en español, inglés y chino + hasta 2 idiomas que el modelo elija según el tema; consultas
+    traducidas con la terminología de cada idioma. Si el pedido limita idiomas o países, se respeta.
+    Notas e informe en el idioma del pedido.
+  - Hasta ~100 búsquedas: 25 iniciales repartidas entre idiomas + hasta 9 rondas de 8; 8
+    resultados por búsqueda; tope 300 fuentes. Si 15 fuentes seguidas no aportan al tema, deja de
+    buscar y redacta (las que no se pudieron leer no cuentan); avisa en el progreso.
+  - Informe por secciones: índice (con resumen corto de cada fuente) → cada sección con las notas
+    de sus fuentes → resumen y conclusiones. Normal y Profunda siguen con informe en una respuesta.
 - Tarjeta en el portafolio: Principales, badge «En desarrollo», enlace a la página de Pages.
   `ESTADO.md` del portafolio quedó borrado a propósito: no restaurarlo.
 
@@ -56,24 +75,35 @@ que la PC de Franco esté prendida, sin costo, con historial guardado por person
 - 2026-11-12: prueba real Profunda con Neon: 15,3 min, 23 búsquedas, 37 fuentes leídas y 18
   descartadas, sin esperas ni errores; informe de 18.700 caracteres con tabla, recomendación y
   fuentes. Tras reiniciar el servidor: sigue en el historial, mismo texto y mismo PDF.
+- 2026-11-12: PDF arreglado: `aptoParaPDF` borraba los saltos de línea (Roboto no tiene glifo
+  para "\n") y todo el informe salía como un solo título; tablas de 5+ columnas se salían de la
+  hoja (ancho "auto", letra y relleno más chicos, citas pegadas separadas). Verificado con el
+  informe real: ninguna palabra fuera del margen.
+- 2026-11-12: panel lateral, borde con luz y Exhaustiva (idiomas, 300 fuentes, corte por
+  irrelevantes, informe por secciones). Recorridos en navegador con simulación (escritorio,
+  celular, cajón, foco, Escape, Exhaustiva completa) sin errores. 30 pruebas automáticas pasan.
 - 2026-11-12: página para GitHub Pages (token, CORS, workflow, aviso «Despertando el servidor»
   con reintento de lecturas, PDF descargado con el token). Probado en navegador desde otro
   origen: entrar, investigar, PDF con nombre, recargar sin perder sesión, servidor caído y
   vuelta, salir; sin errores. Tarjeta agregada al portafolio (+ arreglo del badge cortado en
-  celular, solo ≤480 px). 27 pruebas automáticas pasan.
+  celular, solo ≤480 px).
 
 ## En curso
 
-- Esperando que Franco active Pages (Settings → Pages → Source: GitHub Actions) y haga push del
-  investigador y del portafolio.
+- Esperando que Franco haga push del investigador (PDF, panel, borde, Exhaustiva) y del
+  portafolio, con Pages activado (Settings → Pages → Source: GitHub Actions).
 
 ## Pendiente
 
-1. Franco: activar Pages en el repo; push del investigador y del portafolio.
+1. Franco: activar Pages en el repo (si falta); push del investigador y del portafolio.
 2. Comprobar que Render tomó `ORIGENES_PERMITIDOS` (Environment) y que el workflow publicó.
 3. Verificar desde https://franco944796.github.io/investigador/: entrar, investigación larga sin
    que Render se duerma, reconexión, PDF, despertar tras 15 min, bloqueo por IP
    (`CONFIAR_EN_PROXY`), DuckDuckGo desde el servidor.
+4. Una Exhaustiva real (~100 búsquedas de Tavily, horas): idiomas elegidos, calidad de las
+   consultas traducidas, lectura de sitios en chino, informe por secciones y su PDF.
+5. Último paso: revisión completa del proyecto con el modelo Fable 5.2 (subagente) para ver qué
+   se puede mejorar.
 
 ## Archivos clave y comandos
 
@@ -92,8 +122,13 @@ que la PC de Franco esté prendida, sin costo, con historial guardado por person
 
 ## Problemas conocidos y sin verificar
 
-- Sin verificar: todo el comportamiento en Render, una investigación Exhaustiva real (largo del informe:
-  los proveedores pueden cortar la respuesta por límite de tokens de salida).
+- Sin verificar: todo el comportamiento en Render; una Exhaustiva real (calidad de las consultas
+  en otros idiomas, sitios chinos que bloqueen la lectura, largo de cada sección).
+- Exhaustiva: el informe se muestra entero al terminar (el resumen va arriba pero se escribe
+  último); durante la redacción el progreso dice «sección k de N».
+- Preguntas de seguimiento: el modelo recibe hasta 90.000 caracteres de informe + notas; en una
+  Exhaustiva larga no ve todo.
+- DuckDuckGo (respaldo) no usa región por idioma.
 - Si Render reinicia el servicio en medio de una investigación, queda "interrumpida" (no se
   retoma; hay que empezarla de nuevo).
 - Créditos gratuitos de NVIDIA: no se sabe si se agotan.
