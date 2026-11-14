@@ -23,6 +23,8 @@ export const PALETAS = {
 const FUENTE = "Roboto, system-ui, sans-serif";
 const ANCHO = 640;
 const MAX_ELEMENTOS = 24;
+// Con uno o dos datos, una frase dice lo mismo que el gráfico.
+const MINIMO = 3;
 
 const esc = (texto) =>
   String(texto ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -77,7 +79,7 @@ function barras(spec, p) {
     .map((d) => ({ etiqueta: texto(d?.etiqueta, 40), valor: numero(d?.valor), cita: cita(d?.cita) }))
     .filter((d) => d.etiqueta && d.valor !== null && d.valor >= 0)
     .slice(0, MAX_ELEMENTOS);
-  if (datos.length < 2) return null;
+  if (datos.length < MINIMO) return null;
   const unidad = texto(spec.unidad, 20);
   const etiquetas = Math.min(230, Math.max(...datos.map((d) => anchoDe(d.etiqueta, 13))) + 12);
   const maximo = Math.max(...datos.map((d) => d.valor)) || 1;
@@ -95,6 +97,13 @@ function barras(spec, p) {
   return { svg: svg(ANCHO, datos.length * fila + 20, cuerpo, spec.titulo), citas: datos.map((d) => d.cita) };
 }
 
+// Años («2024»), meses («2024-03») o números: valen como posición en el eje. Otra cosa, no.
+function valorDeX(x) {
+  const fecha = x.match(/^(\d{4})(?:-(\d{2}))?(?:-(\d{2}))?$/);
+  if (fecha) return Number(fecha[1]) + (fecha[2] ? (Number(fecha[2]) - 1) / 12 : 0) + (fecha[3] ? Number(fecha[3]) / 366 : 0);
+  return /^-?\d+([.,]\d+)?$/.test(x) ? Number(x.replace(",", ".")) : null;
+}
+
 function lineas(spec, p) {
   const series = (Array.isArray(spec.series) ? spec.series : [])
     .map((s) => ({
@@ -103,10 +112,19 @@ function lineas(spec, p) {
         .map((punto) => ({ x: texto(String(punto?.x ?? ""), 16), y: numero(punto?.y), cita: cita(punto?.cita) }))
         .filter((punto) => punto.x && punto.y !== null),
     }))
-    .filter((s) => s.puntos.length >= 2)
+    .filter((s) => s.puntos.length >= MINIMO)
     .slice(0, p.series.length);
   if (!series.length) return null;
-  const xs = [...new Set(series.flatMap((s) => s.puntos.map((punto) => punto.x)))].slice(0, 40);
+  let xs = [...new Set(series.flatMap((s) => s.puntos.map((punto) => punto.x)))].slice(0, 40);
+  // Si el eje es de tiempo o de números, va ordenado y a escala aunque el modelo haya dado los
+  // puntos salteados; si son categorías, queda el orden en que llegaron.
+  const valores_x = new Map(xs.map((x) => [x, valorDeX(x)]));
+  const numerico = xs.length > 1 && [...valores_x.values()].every((valor) => valor !== null);
+  if (numerico) {
+    xs = xs.sort((a, b) => valores_x.get(a) - valores_x.get(b));
+    for (const s of series) s.puntos.sort((a, b) => valores_x.get(a.x) - valores_x.get(b.x));
+  }
+  const [x0, x1] = numerico ? [valores_x.get(xs[0]), valores_x.get(xs.at(-1))] : [0, 0];
   const ys = series.flatMap((s) => s.puntos.map((punto) => punto.y));
   const { inicio, hasta, valores } = escala(Math.min(...ys), Math.max(...ys));
   const unidad = texto(spec.unidad, 20);
@@ -115,7 +133,11 @@ function lineas(spec, p) {
   const alto = 300;
   const ancho = ANCHO - izq - der;
   const altoUtil = alto - arriba - abajo;
-  const xDe = (x) => izq + (xs.length === 1 ? ancho / 2 : (xs.indexOf(x) / (xs.length - 1)) * ancho);
+  const xDe = (x) => {
+    if (xs.length === 1 || (numerico && x1 === x0)) return izq + ancho / 2;
+    const parte = numerico ? (valores_x.get(x) - x0) / (x1 - x0) : xs.indexOf(x) / (xs.length - 1);
+    return izq + parte * ancho;
+  };
   const yDe = (y) => arriba + altoUtil - ((y - inicio) / (hasta - inicio || 1)) * altoUtil;
   let cuerpo = "";
   for (const v of valores) {
@@ -124,12 +146,15 @@ function lineas(spec, p) {
       `<line x1="${izq}" x2="${ANCHO - der}" y1="${y}" y2="${y}" stroke="${p.borde}"/>` +
       `<text x="${izq - 6}" y="${Number(y) + 4}" text-anchor="end" font-size="11" fill="${p.suave}">${esc(formatear(v))}</text>`;
   }
-  const cada = Math.ceil(xs.length / 10);
-  xs.forEach((x, i) => {
-    if (i % cada === 0 || i === xs.length - 1) {
-      cuerpo += `<text x="${xDe(x).toFixed(1)}" y="${alto - abajo + 18}" text-anchor="middle" font-size="11" fill="${p.suave}">${esc(x)}</text>`;
-    }
-  });
+  // Las etiquetas del eje se saltean cuando quedarían encimadas.
+  let ultima = -Infinity;
+  for (const x of xs) {
+    const posicion = xDe(x);
+    const lugar = anchoDe(x, 11) + 10;
+    if (posicion - ultima < lugar) continue;
+    ultima = posicion;
+    cuerpo += `<text x="${posicion.toFixed(1)}" y="${alto - abajo + 18}" text-anchor="middle" font-size="11" fill="${p.suave}">${esc(x)}</text>`;
+  }
   if (unidad) cuerpo += `<text x="4" y="${arriba - 12}" font-size="11" fill="${p.suave}">${esc(unidad)}</text>`;
   series.forEach((s, i) => {
     const color = p.series[i];
@@ -153,7 +178,7 @@ function lineaDeTiempo(spec, p) {
     .map((e) => ({ fecha: texto(e?.fecha, 20), texto: texto(e?.texto, 160), cita: cita(e?.cita) }))
     .filter((e) => e.fecha && e.texto)
     .slice(0, MAX_ELEMENTOS);
-  if (eventos.length < 2) return null;
+  if (eventos.length < MINIMO) return null;
   const columna = 118;
   let y = 12;
   let cuerpo = "";
@@ -197,7 +222,7 @@ function diagrama(spec, p) {
     .slice(0, MAX_ELEMENTOS);
   if (spec.forma === "partes") {
     const centro = texto(spec.centro, 80);
-    if (!centro || pasos.length < 2) return null;
+    if (!centro || pasos.length < MINIMO) return null;
     const columnas = pasos.length <= 4 ? 2 : 3;
     const anchoCaja = (ANCHO - 20 - (columnas - 1) * 16) / columnas;
     const principal = caja(ANCHO / 2 - 150, 8, 300, partirEnLineas(centro, 34).slice(0, 3), p, true);
@@ -218,7 +243,7 @@ function diagrama(spec, p) {
     });
     return { svg: svg(ANCHO, y + altoFila + 10, cuerpo, spec.titulo), citas: pasos.map((paso) => paso.cita) };
   }
-  if (pasos.length < 2) return null;
+  if (pasos.length < MINIMO) return null;
   const anchoCaja = 440;
   const x = (ANCHO - anchoCaja) / 2;
   let y = 8;
@@ -296,6 +321,25 @@ export function dibujarGrafico(fuente, { tema = "claro", geografia = null } = {}
     titulo: texto(spec.titulo, 140),
     citas: [...new Set(resultado.citas.filter(Boolean))].sort((a, b) => a - b),
   };
+}
+
+// Para depurar el informe sin dibujar: ¿este bloque va a mostrar algo? El mapa no se puede
+// dibujar sin la geografía, así que se cuentan sus países.
+export function graficoValido(fuente) {
+  let spec;
+  try {
+    spec = JSON.parse(fuente);
+  } catch {
+    return false;
+  }
+  if (spec?.tipo === "imagen") return imagenDe(fuente) !== null;
+  if (spec?.tipo === "mapa") {
+    const paises = (Array.isArray(spec.datos) ? spec.datos : []).filter(
+      (dato) => /^[a-z]{3}$/i.test(texto(dato?.pais, 3)) && numero(dato?.valor) !== null,
+    );
+    return paises.length >= MINIMO;
+  }
+  return dibujarGrafico(spec) !== null;
 }
 
 export const tipoDeGrafico = (fuente) => {

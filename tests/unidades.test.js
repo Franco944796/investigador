@@ -223,6 +223,8 @@ test("OpenAlex: arma la ficha con el resumen reconstruido y sin resumen no da co
     url: "https://doi.org/10.1/x",
     resumen: "Solid-state batteries\nA, B, C et al.\n2025 · Nature Energy\nCitas: 12\nResumen: Dense cells",
     contenido: "Solid-state batteries\nA, B, C et al.\n2025 · Nature Energy\nCitas: 12\nResumen: Dense cells",
+    tipo: "académico",
+    fecha: "2025",
   });
   assert.equal(deOpenAlex({ ...obra, abstract_inverted_index: null }).contenido, "");
 });
@@ -288,4 +290,51 @@ test("libros: OpenAlex filtra solo libros con resumen; si Google Books falla, qu
   assert.equal(openAlex.searchParams.get("per_page"), "4");
   assert.ok(pedidos.some((url) => url.includes("googleapis") && url.includes("maxResults=4")));
   assert.deepEqual(resultado.resultados.map((libro) => libro.titulo), ["Libro"]);
+});
+
+test("Tavily: excluye video y redes, limita al último año si se pide y corta la cola de bajo puntaje", async () => {
+  const original = globalThis.fetch;
+  const cuerpos = [];
+  globalThis.fetch = async (url, opciones) => {
+    cuerpos.push(JSON.parse(opciones.body));
+    const resultado = (sitio, score) => ({ title: sitio, url: `https://${sitio}/a`, score });
+    return new Response(
+      JSON.stringify({
+        results: [resultado("iea.org", 0.8), resultado("m.youtube.com", 0.7), resultado("flojo.test", 0.2)],
+      }),
+    );
+  };
+  let resultados;
+  try {
+    const buscar = crearBuscador({ tavilyClave: "clave", excluidos: ["youtube.com"] });
+    ({ resultados } = await buscar("costo solar", { cantidad: 8, reciente: true }));
+    await buscar("costo solar", { cantidad: 8, dominios: ["youtube.com"] });
+  } finally {
+    globalThis.fetch = original;
+  }
+  assert.deepEqual(cuerpos[0].exclude_domains, ["youtube.com"]);
+  assert.equal(cuerpos[0].time_range, "year");
+  assert.deepEqual(resultados.map((r) => r.url), ["https://iea.org/a"], "sin YouTube ni el de 0,2");
+  assert.equal("exclude_domains" in cuerpos[1], false, "si el pedido nombra el sitio, no se excluye");
+});
+
+test("papers: primero la búsqueda semántica y, si falla, la común", async () => {
+  const original = globalThis.fetch;
+  const parametros = [];
+  globalThis.fetch = async (url) => {
+    const direccion = new URL(url);
+    const semantica = direccion.searchParams.has("search.semantic");
+    parametros.push(semantica ? "semántica" : "común");
+    if (semantica) return new Response("{}", { status: 400 });
+    const obra = { id: "W1", display_name: "Paper", abstract_inverted_index: { Texto: [0] } };
+    return new Response(JSON.stringify({ results: [obra] }));
+  };
+  try {
+    const { crearBuscadorAcademico } = await import("../src/busqueda.js");
+    const { resultados } = await crearBuscadorAcademico({ clave: "" })("frase larga", { cantidad: 3 });
+    assert.deepEqual(resultados.map((r) => [r.titulo, r.tipo]), [["Paper", "académico"]]);
+  } finally {
+    globalThis.fetch = original;
+  }
+  assert.deepEqual(parametros, ["semántica", "común"]);
 });

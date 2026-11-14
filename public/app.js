@@ -171,6 +171,7 @@ function agregarRespuesta(pregunta = "") {
   nodo.querySelector(".raiz").textContent = tituloDe(pregunta) || "Investigación";
   const hojasDe = new Map();
   let sueltas = null;
+  let subpreguntas = 0;
   const informe = nodo.querySelector(".informe");
   const aviso = nodo.querySelector(".aviso");
   const segundoPlano = nodo.querySelector(".segundo-plano");
@@ -232,7 +233,7 @@ function agregarRespuesta(pregunta = "") {
     });
   }
 
-  function agregarAviso(texto) {
+  function agregarNota(etiqueta, contenido) {
     enArbol(() =>
       ramas.append(
         elemento(
@@ -241,17 +242,28 @@ function agregarRespuesta(pregunta = "") {
           elemento(
             "div",
             { className: "aviso-nodo" },
-            elemento("span", { className: "etiqueta", textContent: "Aviso" }),
-            texto,
+            elemento("span", { className: "etiqueta", textContent: etiqueta }),
+            contenido,
           ),
         ),
       ),
     );
   }
 
+  // Las subpreguntas que el plan se propone responder; las rondas pueden sumar alguna.
+  function agregarAspectos({ lista, nuevos }) {
+    const numerada = elemento(
+      "ol",
+      { className: "subpreguntas", start: subpreguntas + 1 },
+      ...lista.map((texto) => elemento("li", { textContent: texto })),
+    );
+    subpreguntas += lista.length;
+    agregarNota(nuevos ? "Subpreguntas nuevas" : "Subpreguntas a responder", numerada);
+  }
+
   // Las investigaciones guardadas antes de numerar las búsquedas no dicen de cuál salió cada
   // fuente: van juntas en una rama aparte para no atribuirlas mal.
-  function pintarFuente({ id, url, titulo, estado: situacion, n, motivo, consulta }) {
+  function pintarFuente({ id, url, titulo, estado: situacion, n, motivo, consulta, tipo, fecha }) {
     let hoja = filas.get(id);
     if (!hoja) {
       const destino =
@@ -288,8 +300,9 @@ function agregarRespuesta(pregunta = "") {
       leidas++;
       contar();
     }
-    if (situacion === "descartada" && motivo && !hoja.querySelector(".motivo")) {
-      hoja.append(elemento("span", { className: "motivo", textContent: motivo }));
+    const detalle = situacion === "descartada" ? motivo : [tipo, fecha].filter(Boolean).join(" · ");
+    if (detalle && situacion !== "leyendo" && !hoja.querySelector(".motivo")) {
+      hoja.append(elemento("span", { className: "motivo", textContent: detalle }));
     }
   }
 
@@ -317,7 +330,8 @@ function agregarRespuesta(pregunta = "") {
         }
         if (tipo === "etapa") etapa.textContent = datos.texto;
         if (tipo === "espera") etapa.textContent = `Esperando cupo del proveedor (${datos.segundos} s)`;
-        if (tipo === "aviso") agregarAviso(datos.texto);
+        if (tipo === "aviso") agregarNota("Aviso", datos.texto);
+        if (tipo === "aspectos" && Array.isArray(datos.lista)) agregarAspectos(datos);
         if (tipo === "consulta") {
           agregarRama(datos);
           busquedas++;

@@ -57,6 +57,15 @@ export function leerConfig(env = process.env) {
     limiteLLMMs: entero(env, "LLM_LIMITE_MINUTOS", 30) * 60 * 1000,
     tavilyClave: env.TAVILY_CLAVE || "",
     openalexClave: env.OPENALEX_CLAVE || "",
+    // Video y redes sociales: casi nunca sirven como fuente de un informe. Si el pedido nombra uno
+    // de estos sitios en Fuentes, igual se busca ahí.
+    dominiosExcluidos: (
+      env.DOMINIOS_EXCLUIDOS ??
+      "youtube.com,youtu.be,facebook.com,instagram.com,tiktok.com,x.com,twitter.com,pinterest.com,linkedin.com,quora.com"
+    )
+      .split(",")
+      .map((dominio) => dominio.trim().toLowerCase())
+      .filter(Boolean),
     googleBooksClave: env.GOOGLE_BOOKS_CLAVE || "",
     acceso: {
       codigos: env.CODIGOS_ACCESO || "",
@@ -81,7 +90,7 @@ export function leerConfig(env = process.env) {
       informePorSecciones: true,
       irrelevantesSeguidas: entero(env, "IRRELEVANTES_SEGUIDAS", 20),
       fuentesPorSeguimiento: entero(env, "FUENTES_POR_SEGUIMIENTO", 24),
-      caracteresPorFuente: entero(env, "CARACTERES_POR_FUENTE", 7000),
+      caracteresPorFuente: entero(env, "CARACTERES_POR_FUENTE", 9000),
       tareasEnParalelo: entero(env, "TAREAS_EN_PARALELO", 3),
       simultaneas: entero(env, "INVESTIGACIONES_SIMULTANEAS", 2),
       seguimientosPorInforme: entero(env, "SEGUIMIENTOS_POR_INFORME", 20),

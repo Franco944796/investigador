@@ -101,6 +101,40 @@ que la PC de Franco esté prendida, sin costo, con historial guardado por person
 
 ## En curso
 
+- Exhaustiva de prueba (id 33d45e5e…, energía solar) terminada: 8 h 12 min, 100 búsquedas (web
+  53, papers 21, sitios 13, libros 13), 348 fuentes leídas, 13 secciones, PDF de 43 páginas, 31
+  gráficos sin JSON roto (14 barras, 9 líneas, 5 líneas de tiempo, 1 mapa, 1 diagrama, 1
+  imagen). Ya se puede hacer push.
+- Revisión con Fable 5.2 (2026-11-12/13) sobre el código y esa prueba. Mejoras hechas (sin
+  push), con 60 pruebas automáticas pasando:
+  1. Pasajes relevantes (`src/pasajes.js`): de cada página se analizan hasta 9.000 caracteres
+     elegidos por la búsqueda que la trajo y el tema (antes, los primeros 7.000). En un informe
+     real de IRENA de 474.000 caracteres: menciones de LCOE de 1 a 15, cifras con unidad de 4 a 68.
+  2. Destino por consulta: el modelo marca "destino" (academico/libros/sitios); `site:x` pasa
+     a filtro de dominios; un destino inactivo va a la web. Fallo de un buscador → aviso una vez
+     + respaldo en la web; con 2 fallos seguidos se deja de dirigir ahí.
+  3. Calidad: `DOMINIOS_EXCLUIDOS` (video y redes), corte por puntaje de Tavily al 30 % del
+     mejor (al 50 % se perdían eia.gov e iea.org), notas con Fecha/Tipo (`interpretarNotas`),
+     fichas y lista de fuentes con tipo y fecha; el informe prioriza oficial/académico/reciente.
+  4. Consultas: `parecidas` descarta las casi iguales en el mismo buscador; sin año forzado;
+     `"reciente": true` → `time_range: year`; la revisión ve qué rindió cada búsqueda.
+  5. Subpreguntas (`aspectos`, 6 a 12, evento «aspectos», nodo en el árbol): cada nota dice
+     cuáles responde; la revisión ve la cobertura por subpregunta (ya no 90.000 caracteres de
+     notas) y puede sumar hasta 2 nuevas por ronda (máx. 15); el índice las usa de guía.
+  6. Papers y libros con búsqueda semántica de OpenAlex (en fila, 1 por segundo; respaldo en la
+     común).
+  7. Robustez: `completar` continúa las respuestas cortadas por largo (hasta 2 veces);
+     guardado en Neon cada 2 min; secciones redactadas de a 3 en paralelo; etapas con hora.
+  Además: gráficos de líneas con eje de tiempo ordenado y a escala; el prompt pide no titular
+  los gráficos ni dibujar menos de 4 datos. Descartado por ahora: lector de PDF propio.
+  Tras la corrida real: el año en curso se quita de las consultas por código y pasa a
+  `reciente`; mínimo de secciones proporcional a las fuentes; gráficos con mínimo de 3 datos,
+  máximo 2 por sección y sin título duplicado (`depurarGraficos`, `graficoValido`). 62 pruebas.
+- Corrida corta real en local (2026-11-13, 7 búsquedas, sin base): 12 subpreguntas, dirigidas a
+  papers y a iea.org, las 7 búsquedas con fuentes útiles, 15 de 15 notas con fecha, tipo y
+  subpreguntas, informe de 9 secciones que marca las fuentes interesadas. Cada sección tarda
+  45–170 s con los modelos gratuitos.
+
 - Sin push: progreso como árbol (pedido 2026-11-12; Franco eligió árbol y que reemplace la
   lista). Raíz = pregunta; cada búsqueda es una burbuja (etiqueta Busca/Papers/Libros/En sitio +
   idioma) que crece con su texto; sus fuentes cuelgan a la derecha (abajo en celular) con punto y
@@ -164,9 +198,13 @@ que la PC de Franco esté prendida, sin costo, con historial guardado por person
   del informe HTML se recalcula con el scroll (también al saltar y al final). Mínimo de 60
   búsquedas antes de aceptar «ya alcanza» (`MIN_BUSQUEDAS`, decisión de Franco); igual corta si
   20 fuentes seguidas no aportan. 48 pruebas pasan.
-- Siguiente: tras el push, lanzar una Exhaustiva de prueba en Render que active todo (sitios
-  iea.org/irena.org, Google Scholar, libros, gráficos y mapa) sobre energía solar fotovoltaica
-  2010–2026; Franco avisa cuando termina.
+- Push hecho (fa5c014): Render y Pages con los arreglos y el mínimo de 60 búsquedas.
+- Exhaustiva de prueba lanzada en Render el 2026-11-12 a las 14:36 (id 33d45e5e-9687-4960-a7d6-
+  af5937e4def3): energía solar fotovoltaica 2010–2026, con Fuentes iea.org, irena.org, Google
+  Scholar y libros, y Entrega con gráficos, mapa y línea de tiempo. Sin clave de OpenAlex todavía
+  (presupuesto compartido). Franco avisa cuando termina; no hacer push mientras corre. Revisar:
+  reparto de búsquedas (sitios/papers/libros/web), gráficos e imágenes en chat, HTML y PDF,
+  árbol en vivo, mínimo de 60 búsquedas.
 - Bloqueo por intentos NO funcionaba en Render (9 fallos → 401, el código correcto entró): detrás
   de Cloudflare, `req.ip` con CONFIAR_EN_PROXY=1 es el borde de Cloudflare, que cambia. Arreglado
   sin push: `CABECERA_IP=cf-connecting-ip` (render.yaml) y `ipDe()` en `src/app.js`; prueba nueva.
@@ -178,13 +216,16 @@ que la PC de Franco esté prendida, sin costo, con historial guardado por person
 
 ## Pendiente
 
-1. Terminar la Exhaustiva real y revisar: idiomas elegidos, consultas traducidas, sitios en
-   chino, corte por irrelevantes, informe por secciones y su PDF, que Render no se durmió.
-2. Franco: push del arreglo del bloqueo (después de la Exhaustiva). Verificar: 8 fallos → el
-   9.º da 429; y con CF-Connecting-IP falsa en cada pedido igual bloquea (Cloudflare la reescribe).
-3. Despertar tras 15 min sin uso desde la página de Pages.
-4. Último paso: revisión completa del proyecto con el modelo Fable 5.2 (subagente) para ver qué
-   se puede mejorar.
+1. Franco: push de todo lo de la revisión (sin push desde fa5c014). No hay nada corriendo en
+   Render.
+2. Franco: clave de OpenAlex (openalex.org → Settings → API key) en `.env` y en Render →
+   Environment (`OPENALEX_CLAVE`); opcional `GOOGLE_BOOKS_CLAVE`. Sin clave, papers y libros
+   dejaron de responder en Render tras 2 búsquedas.
+3. Verificar en Render con una Exhaustiva real: subpreguntas en el árbol, destinos, avisos de
+   fallo, fecha y tipo en las fuentes, gráficos depurados, y las horas de cada etapa (la de
+   prueba tardó 8 h 12 min sin esperas por cupo: ver dónde se va el tiempo).
+4. Prueba del bloqueo por intentos en Render (8 códigos malos; Franco pidió hacerla al final).
+5. Despertar de Render tras 15 min sin uso desde la página de Pages.
 
 ## Archivos clave y comandos
 

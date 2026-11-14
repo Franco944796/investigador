@@ -136,7 +136,15 @@ test("investigación en segundo plano, seguimiento, PDF, historial y límite dia
   assert.equal(html.archivo, "tema-de-prueba");
   assert.equal(html.informe, informe);
   assert.equal(html.fuentes.length, 8, "incluye las 2 que sumó el seguimiento");
-  assert.deepEqual(Object.keys(html.fuentes[0]).sort(), ["n", "titulo", "url"], "sin las notas");
+  assert.deepEqual(
+    html.fuentes[0],
+    { n: 1, url: html.fuentes[0].url, titulo: html.fuentes[0].titulo, tipo: "oficial", fecha: "2025-03" },
+    "con tipo y fecha, sin las notas",
+  );
+  assert.deepEqual(
+    eventos.find((evento) => evento.tipo === "aspectos").datos,
+    { lista: ["¿Qué opciones hay?", "¿Cuánto rinde cada una?"] },
+  );
   assert.deepEqual(html.intercambios, [
     { pregunta: "¿Cuál conviene?", respuesta: "Según el informe, la opción B duplica a la A [2]." },
   ]);

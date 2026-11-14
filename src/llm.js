@@ -7,6 +7,9 @@ const ETIQUETA = "<think>";
 // Los temporizadores pueden dispararse un instante antes: sin margen, al despertar el proveedor
 // todavía figura descansando y se pierde una vuelta.
 const MARGEN_MS = 20;
+const CONTINUACIONES = 2;
+const CONTINUAR =
+  "Continúa exactamente donde quedó el texto, sin repetir nada de lo ya escrito y sin agregar comentarios.";
 
 export class ErrorLLM extends Error {}
 export class ErrorFormato extends ErrorLLM {}
@@ -165,15 +168,32 @@ export function crearLLM(proveedores, { esperas = ESPERAS_MS, limiteMs = 30 * 60
     }
   }
 
+  // Cada proveedor tiene su propio tope de largo de respuesta: si corta el texto ahí
+  // (finish_reason "length"), se le pide que siga donde quedó en vez de entregar una sección trunca.
   async function completar(mensajes, { signal, alEsperar, temperatura = 0.3 } = {}) {
-    const respuesta = await solicitar(
-      { messages: mensajes, temperature: temperatura },
-      { signal, alEsperar },
-    );
-    const datos = await respuesta.json();
-    const texto = datos.choices?.[0]?.message?.content;
-    if (typeof texto !== "string") throw new ErrorLLM("El modelo devolvió una respuesta vacía.");
-    return quitarPensamiento(texto).trim();
+    let texto = "";
+    let pedido = mensajes;
+    for (let tramo = 0; tramo <= CONTINUACIONES; tramo++) {
+      const respuesta = await solicitar(
+        { messages: pedido, temperature: temperatura },
+        { signal, alEsperar },
+      );
+      const opcion = (await respuesta.json()).choices?.[0];
+      const parte = opcion?.message?.content;
+      if (typeof parte !== "string") {
+        if (texto) break;
+        throw new ErrorLLM("El modelo devolvió una respuesta vacía.");
+      }
+      const visible = quitarPensamiento(parte);
+      texto += visible;
+      if (opcion.finish_reason !== "length" || !visible.trim()) break;
+      pedido = [
+        ...mensajes,
+        { role: "assistant", content: texto },
+        { role: "user", content: CONTINUAR },
+      ];
+    }
+    return texto.trim();
   }
 
   async function completarJSON(mensajes, opciones) {

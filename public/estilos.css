@@ -623,6 +623,11 @@ textarea {
   color: #5fd3dc;
 }
 
+.subpreguntas {
+  margin: 4px 0 0;
+  padding-left: 1.6em;
+}
+
 .rama.nota .aviso-nodo {
   max-width: none;
   border-style: dashed;

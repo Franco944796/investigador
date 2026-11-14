@@ -73,3 +73,23 @@ test("configuración: proveedores numerados con clave, o el endpoint único como
     { urlBase: "http://localhost:8080/v1", clave: "", modelo: "auto" },
   ]);
 });
+
+test("si el proveedor corta la respuesta por largo, se le pide que siga y se une el texto", async () => {
+  const original = globalThis.fetch;
+  const pedidos = [];
+  globalThis.fetch = async (url, opciones) => {
+    const { messages } = JSON.parse(opciones.body);
+    pedidos.push(messages);
+    const [content, finish_reason] = pedidos.length === 1 ? ["Primera parte, ", "length"] : ["segunda parte.", "stop"];
+    return new Response(JSON.stringify({ choices: [{ message: { content }, finish_reason }] }));
+  };
+  try {
+    const llm = crearLLM([{ urlBase: "http://proveedor.test/v1", clave: "", modelo: "m" }]);
+    assert.equal(await llm.completar(PEDIDO), "Primera parte, segunda parte.");
+  } finally {
+    globalThis.fetch = original;
+  }
+  assert.equal(pedidos.length, 2);
+  assert.deepEqual(pedidos[1].slice(-2).map((mensaje) => mensaje.role), ["assistant", "user"]);
+  assert.equal(pedidos[1].at(-2).content, "Primera parte, ");
+});

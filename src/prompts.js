@@ -9,7 +9,19 @@ const MAX_INDICE = 100000;
 // Tope del informe que reciben el resumen y las conclusiones (~40.000 tokens).
 const MAX_CUERPO = 160000;
 const CORTA =
-  "Cada consulta debe ser corta, como se escribe en un buscador: 6 palabras o menos (en chino, japonés o coreano, de 4 a 12 caracteres).";
+  "Cada consulta debe ser breve y específica, como se escribe en un buscador: entre 3 y 9 palabras (en chino, japonés o coreano, de 4 a 16 caracteres), sin operadores como site: ni comillas. No pongas el año salvo que busques datos de un año puntual.";
+const RECIENTE =
+  'Para pedir lo más nuevo, agrega "reciente": true a esa consulta y el buscador se limita al último año.';
+const CONFIABILIDAD =
+  "Junto a cada fuente van su tipo y su fecha: si los datos se contradicen, prioriza las fuentes oficiales, académicas y más recientes, y aclara en el texto cuando un dato sea viejo o venga de una fuente interesada (empresa) o poco confiable (blog, foro).";
+// Notas de muestra por subpregunta que ve la revisión.
+const MUESTRA = 5;
+const SOLIDAS = new Set(["oficial", "académico", "libro"]);
+
+const datosDe = (fuente) => {
+  const datos = [fuente.tipo, fuente.fecha].filter(Boolean).join(", ");
+  return datos ? ` (${datos})` : "";
+};
 
 const base = () =>
   `Eres un asistente de investigación riguroso. Hoy es ${new Date().toLocaleDateString("sv-SE")}. ` +
@@ -26,22 +38,22 @@ const fichas = (fuentes, recorte) =>
         !recorte && fuente.imagenes?.length
           ? `\nImágenes: ${fuente.imagenes.map((imagen) => `${imagen.url} — ${imagen.descripcion}`).join(" | ")}`
           : "";
-      return `[${fuente.n}] ${fuente.titulo} — ${fuente.url}\n${notas}${imagenes}`;
+      return `[${fuente.n}] ${fuente.titulo} — ${fuente.url}${datosDe(fuente)}\n${notas}${imagenes}`;
     })
     .join("\n\n");
 
-const GRAFICOS = `Gráficos: si las notas tienen datos que se entienden mejor dibujados, agrega hasta 2 por sección con un bloque de código \`\`\`grafico que contenga solo JSON, en uno de estos formatos. Solo cifras y fechas que estén en las notas, nunca estimadas, y cada dato con la cita de su fuente:
+const GRAFICOS = `Gráficos: si las notas tienen datos que se entienden mejor dibujados, agrega como mucho 1 por sección (2 solo si son de distinto tipo y los dos aportan) con un bloque de código \`\`\`grafico que contenga solo JSON, en uno de estos formatos. Solo cifras y fechas que estén en las notas, nunca estimadas, y cada dato con la cita de su fuente. El gráfico ya lleva su título: no le pongas un encabezado ni una frase de presentación antes.
 - Barras, para comparar una cifra entre 3 y 20 opciones: {"tipo": "barras", "titulo": "...", "unidad": "Wh/kg", "datos": [{"etiqueta": "...", "valor": 450, "cita": 3}]}
-- Líneas, para la evolución en el tiempo: {"tipo": "lineas", "titulo": "...", "unidad": "...", "series": [{"nombre": "...", "puntos": [{"x": "2020", "y": 120, "cita": 2}]}]}
+- Líneas, para la evolución en el tiempo (cada serie con una sola magnitud y una sola unidad; "x" es un año como "2020" o un mes como "2020-06"): {"tipo": "lineas", "titulo": "...", "unidad": "...", "series": [{"nombre": "...", "puntos": [{"x": "2020", "y": 120, "cita": 2}]}]}
 - Línea de tiempo, para hitos con fecha: {"tipo": "linea-de-tiempo", "titulo": "...", "eventos": [{"fecha": "2025-03", "texto": "...", "cita": 4}]}
 - Diagrama de un proceso: {"tipo": "diagrama", "forma": "flujo", "titulo": "...", "pasos": [{"texto": "...", "cita": 1}]}
 - Diagrama de las partes de un sistema o de los actores alrededor de algo: {"tipo": "diagrama", "forma": "partes", "titulo": "...", "centro": "...", "pasos": [{"texto": "...", "cita": 1}]}
 - Mapa con un dato por país (códigos ISO de 3 letras): {"tipo": "mapa", "titulo": "...", "unidad": "...", "datos": [{"pais": "CHN", "valor": 120, "cita": 5}]}
 - Imagen de una fuente (un plano, un esquema, una figura que aporte), solo de las listadas como «Imágenes» en las notas: {"tipo": "imagen", "url": "...", "pie": "qué muestra", "cita": 7}
-Si no hay datos para un gráfico, no lo agregues; no repitas en un gráfico una tabla que ya pusiste.`;
+Un gráfico vale si muestra algo que el texto no deja ver de un vistazo: una serie con 4 puntos o más, una comparación entre 4 elementos o más, una secuencia de hitos. Con menos datos alcanza con la frase o la tabla; no agregues gráficos de relleno ni repitas en un gráfico una tabla que ya pusiste.`;
 
 const DIRIGIDAS =
-  "Las dirigidas al buscador académico van en inglés técnico, con las palabras que usaría el título o el resumen de un paper; las dirigidas a libros, como el título o el tema de un libro, en el idioma del pedido o en inglés; las dirigidas a un sitio, en el idioma de ese sitio.";
+  'Cada dirigida dice a dónde va con "destino": "academico" (buscador de papers: en inglés técnico, como una frase que describa lo que se busca), "libros" (como el título o el tema de un libro, en el idioma del pedido o en inglés) o "sitios" (en el idioma de esos sitios).';
 
 const COMO_NATIVO =
   "Escribe cada consulta como la buscaría un hablante nativo de ese idioma, con la terminología técnica, los nombres propios y las siglas que se usan en él; no traduzcas palabra por palabra. En chino usa caracteres simplificados, salvo que el tema sea de Taiwán o Hong Kong.";
@@ -54,7 +66,9 @@ Reparte las consultas entre los idiomas elegidos, con más en el idioma del pedi
 Sitios, fuentes académicas y libros: si el pedido nombra sitios concretos (por dominio o por nombre, por ejemplo «la OMS» → who.int), pide fuentes académicas o científicas (Google Scholar, papers, revistas) o el tema tiene buena bibliografía en libros (historia, derecho, filosofía, ciencias, biografías, teoría; no para novedades de este mes), pon parte de las consultas en "dirigidas": se buscarán solo dentro de esos sitios, en un buscador de artículos académicos o en catálogos de libros. ${DIRIGIDAS}
 En "sitios" van los dominios de los sitios que el pedido nombra, sin agregar otros; "academico" es true si pide fuentes académicas; "libros" es true si conviene buscar libros. Si nada de esto aplica, "dirigidas" y "sitios" van vacíos.
 
-Formato: {"idiomas": [{"codigo": "es", "nombre": "español"}, {"codigo": "en", "nombre": "inglés"}], "consultas": [{"idioma": "es", "texto": "..."}, {"idioma": "en", "texto": "..."}], "dirigidas": [{"idioma": "en", "texto": "..."}], "sitios": ["who.int"], "academico": false, "libros": false}
+Subpreguntas: en "aspectos", entre 6 y 12 subpreguntas concretas que el informe tiene que responder para cubrir el pedido completo (si el pedido lista aspectos, parte de ellos y agrega los que falten: contexto, datos, actores, problemas, perspectivas). Van en el idioma del pedido y las consultas tienen que cubrirlas todas.
+
+Formato: {"aspectos": ["...", "..."], "idiomas": [{"codigo": "es", "nombre": "español"}, {"codigo": "en", "nombre": "inglés"}], "consultas": [{"idioma": "es", "texto": "..."}, {"idioma": "en", "texto": "...", "reciente": true}], "dirigidas": [{"idioma": "en", "texto": "...", "destino": "academico"}], "sitios": ["who.int"], "academico": false, "libros": false}
 Los nombres de los idiomas van en el idioma del pedido; los códigos, en ISO 639-1.`
     : `Si el tema es técnico o internacional, incluye algunas en inglés.
 
@@ -69,14 +83,20 @@ ${tema}
 """
 
 Genera ${cantidad} consultas de búsqueda web que, en conjunto, cubran el tema desde ángulos distintos: definiciones y contexto, datos y cifras recientes, comparaciones, críticas o problemas conocidos, fuentes oficiales.
-${CORTA}
+${CORTA} ${RECIENTE}
 Si el pedido indica contexto (lugar, fecha, situación), aspectos a cubrir o fuentes preferidas, las consultas deben reflejarlo. No busques lo que pide excluir.
 ${idiomas}`,
     },
   ];
 }
 
-export function promptNotas(tema, pagina) {
+export function promptNotas(tema, pagina, aspectos = []) {
+  const subpreguntas = aspectos.length
+    ? `
+Subpreguntas de la investigación:
+${aspectos.map((aspecto, i) => `${i + 1}. ${aspecto}`).join("\n")}
+`
+    : "";
   return [
     {
       role: "system",
@@ -89,28 +109,85 @@ export function promptNotas(tema, pagina) {
 ${tema}
 """
 
+${subpreguntas}
 Página: ${pagina.titulo}
 URL: ${pagina.url}
 
-Contenido:
+Contenido (de páginas largas van solo los pasajes más relacionados, separados por […]):
 """
 ${pagina.texto}
 """
 
-Extrae en un máximo de 200 palabras lo que esta página aporta al tema: hechos, cifras, fechas, definiciones, posturas y advertencias, con el mayor detalle concreto posible. No agregues nada que no esté en la página. Omite lo que el pedido indique excluir.
-Escribe las notas en el idioma del tema, aunque la página esté en otro; deja entre paréntesis el término original de nombres propios o términos técnicos difíciles de traducir.
-Si la página no aporta nada relevante al tema, responde únicamente: IRRELEVANTE`,
+Si la página no aporta nada concreto al tema (o solo lo menciona de pasada, o es publicidad), responde únicamente: IRRELEVANTE
+Si aporta, responde con este formato:
+Fecha: año o año-mes en que se publicó o actualizó la página (por ejemplo 2025-03), o "desconocida"
+Tipo: una palabra entre oficial (gobierno u organismo), académico, prensa, empresa, blog, foro, otro${
+        aspectos.length
+          ? `
+Aspectos: números de las subpreguntas que esta página ayuda a responder, separados por comas, o "ninguno"`
+          : ""
+      }
+Notas: en un máximo de 250 palabras, lo que la página aporta: hechos, cifras con su unidad y su año, fechas, definiciones, posturas y advertencias, con el mayor detalle concreto posible.
+
+No agregues nada que no esté en la página. Omite lo que el pedido indique excluir. Escribe las notas en el idioma del tema, aunque la página esté en otro; deja entre paréntesis el término original de nombres propios o términos técnicos difíciles de traducir.`,
     },
   ];
+}
+
+// Lo que rindió cada búsqueda, para que la revisión no insista con lo que no trae nada.
+function consultasHechas(conversacion) {
+  return conversacion.consultas
+    .map((texto, i) => {
+      const registro = conversacion.rendimiento?.[i];
+      if (!registro) return `- ${texto}`;
+      const donde = [registro.destino, registro.idioma].filter(Boolean).join("·");
+      const resultado = registro.fallo
+        ? "falló"
+        : registro.nuevas
+          ? `${registro.leidas} útiles de ${registro.nuevas} páginas nuevas`
+          : "sin páginas nuevas";
+      return `- [${donde}] ${texto} → ${resultado}`;
+    })
+    .join("\n");
+}
+
+// Por cada subpregunta: cuántas fuentes la responden, cuántas son sólidas y una muestra de notas.
+function cobertura(conversacion) {
+  const { aspectos, fuentes } = conversacion;
+  const lineas = aspectos.map((aspecto, i) => {
+    const suyas = fuentes.filter((fuente) => fuente.aspectos?.includes(i + 1));
+    const solidas = suyas.filter((fuente) => SOLIDAS.has(fuente.tipo));
+    const reciente = suyas
+      .map((fuente) => fuente.fecha)
+      .filter(Boolean)
+      .sort()
+      .at(-1);
+    const muestra = [...solidas, ...suyas.filter((fuente) => !SOLIDAS.has(fuente.tipo))]
+      .slice(0, MUESTRA)
+      .map((fuente) => `   · [${fuente.n}]${datosDe(fuente)} ${fuente.notas.slice(0, 220).replace(/\s+/g, " ")}`);
+    const detalle = `${suyas.length} fuentes, ${solidas.length} oficiales, académicas o libros${reciente ? `; la más reciente, de ${reciente}` : ""}`;
+    return [`${i + 1}. ${aspecto} — ${detalle}`, ...muestra].join("\n");
+  });
+  const sueltas = fuentes.filter((fuente) => !fuente.aspectos?.length).length;
+  return `${lineas.join("\n")}\nFuentes que no responden a ninguna subpregunta: ${sueltas}`;
 }
 
 export function promptRevision(conversacion, cantidad, dirigidas = 0, { exigir = false } = {}) {
   const total = conversacion.fuentes.length || 1;
   const recorte = Math.max(120, Math.min(MAX_NOTAS_EN_REVISION, Math.floor(MAX_REVISION / total) - 80));
-  const idiomas = conversacion.idiomas?.length
+  const conAspectos = conversacion.aspectos?.length > 0;
+  const reunido = conAspectos
+    ? `Subpreguntas que el informe tiene que responder, con lo reunido para cada una:
+${cobertura(conversacion)}`
+    : `Lo reunido hasta ahora:
+${fichas(conversacion.fuentes, recorte)}`;
+  const criterio = conAspectos
+    ? `Apunta las consultas a las subpreguntas con menos fuentes, o con fuentes poco confiables o viejas, y a los datos concretos que falten en las demás (cifras, fechas, comparaciones, posturas críticas). "completo" es true solo si todas las subpreguntas tienen al menos 3 fuentes y no faltan datos importantes. Si aparece un ángulo importante que ninguna subpregunta cubre, agrégalo en "aspectos_nuevos" (hasta 2).`
+    : "";
+  const formato = conversacion.idiomas?.length
     ? `Las consultas nuevas pueden ser en cualquiera de estos idiomas: ${conversacion.idiomas.map((idioma) => `${idioma.nombre} (${idioma.codigo})`).join(", ")}. Elige para cada una el idioma donde sea más probable encontrar lo que falta. ${COMO_NATIVO}
 
-Formato: {"completo": true, "consultas": []} o {"completo": false, "consultas": [{"idioma": "en", "texto": "..."}]}`
+Formato: {"completo": true, "consultas": []} o {"completo": false, "consultas": [{"idioma": "en", "texto": "...", "reciente": true}]${conAspectos ? ', "aspectos_nuevos": []' : ""}}`
     : `Formato: {"completo": true, "consultas": []} o {"completo": false, "consultas": ["...", "..."]}`;
   return [
     { role: "system", content: `${base()} ${SOLO_JSON}` },
@@ -121,19 +198,20 @@ Formato: {"completo": true, "consultas": []} o {"completo": false, "consultas": 
 ${conversacion.tema}
 """
 
-Consultas ya hechas:
-${conversacion.consultas.map((consulta) => `- ${consulta}`).join("\n")}
+Búsquedas ya hechas y lo que rindió cada una:
+${consultasHechas(conversacion)}
 
-Lo reunido hasta ahora:
-${fichas(conversacion.fuentes, recorte)}
+${reunido}
 
 ${
         exigir
-          ? `Todavía no alcanza para un informe exhaustivo: propone hasta ${cantidad} consultas nuevas, distintas de las ya hechas, para profundizar en lo menos cubierto, conseguir datos más recientes o más precisos, aclarar lo que las fuentes se contradicen y sumar fuentes en otros idiomas. Responde con "completo": false.`
-          : `Indica si con esto alcanza para un informe exhaustivo. Si faltan aspectos importantes, propone hasta ${cantidad} consultas nuevas, distintas de las ya hechas, que los cubran.`
-      } ${CORTA}
+          ? `Todavía no alcanza para un informe exhaustivo: propone hasta ${cantidad} consultas nuevas para profundizar en lo menos cubierto, conseguir datos más recientes o más precisos, aclarar lo que las fuentes se contradicen y sumar fuentes en otros idiomas. Responde con "completo": false.`
+          : `Indica si con esto alcanza para un informe exhaustivo. Si faltan aspectos importantes, propone hasta ${cantidad} consultas nuevas que los cubran.`
+      } ${criterio}
+Las consultas nuevas tienen que ser distintas de las ya hechas: una parecida a otra trae las mismas páginas. Las que no trajeron nada útil necesitan otro enfoque u otras palabras, no la misma idea.
+${CORTA} ${RECIENTE}
 ${dirigidas ? destinoDeRevision(conversacion.destinos, dirigidas) : ""}
-${idiomas}`,
+${formato}`,
     },
   ];
 }
@@ -160,6 +238,7 @@ Escribe un informe exhaustivo en Markdown:
 - ${GRAFICOS}
 - Termina con conclusiones y con lo que no se pudo confirmar o en lo que las fuentes se contradicen.
 - Cada afirmación lleva el número de su fuente entre corchetes, por ejemplo [3] o [1][4].
+- ${CONFIABILIDAD}
 - Usa solo la información de las notas. No inventes datos, fuentes ni enlaces.
 - Si el pedido indica un formato de entrega, aspectos a cubrir o algo a excluir, respétalo por encima de estas pautas, sin dejar de citar.
 - No incluyas una lista de fuentes ni bibliografía: se agrega automáticamente al final.`,
@@ -175,7 +254,7 @@ function destinoDeRevision({ academico, dominios, libros }, cantidad) {
   ]
     .filter(Boolean)
     .join(" y ");
-  return `Además, propone hasta ${cantidad} consultas "dirigidas", que se buscarán solo en ${donde}. ${DIRIGIDAS} Van en el mismo objeto JSON: "dirigidas": [{"idioma": "en", "texto": "..."}].
+  return `Además, propone hasta ${cantidad} consultas "dirigidas", que se buscarán solo en ${donde}. ${DIRIGIDAS} Van en el mismo objeto JSON: "dirigidas": [{"idioma": "en", "texto": "...", "destino": "${academico ? "academico" : libros ? "libros" : "sitios"}"}].
 `;
 }
 
@@ -194,7 +273,7 @@ Nueva pregunta del usuario:
 ${pregunta}
 """
 
-Decide si la pregunta se puede responder bien con el informe o si hace falta buscar información nueva en la web. Si hace falta, propone hasta ${cantidad} consultas de búsqueda. Cada consulta debe ser corta (6 palabras o menos), como se escribe en un buscador.
+Decide si la pregunta se puede responder bien con el informe o si hace falta buscar información nueva en la web. Si hace falta, propone hasta ${cantidad} consultas de búsqueda. ${CORTA}
 
 Formato: {"buscar": false, "consultas": []} o {"buscar": true, "consultas": ["...", "..."]}`,
     },
@@ -232,9 +311,20 @@ export function promptIndice(conversacion) {
   const total = conversacion.fuentes.length || 1;
   const recorte = Math.max(60, Math.min(160, Math.floor(MAX_INDICE / total) - 90));
   const maximo = Math.min(30, Math.max(14, Math.ceil(total / 25)));
+  // Con pocas fuentes, seis secciones quedan casi vacías y cada una cuesta una llamada.
+  const minimo = Math.min(6, Math.max(2, Math.ceil(total / 6)));
   const resumenes = conversacion.fuentes
-    .map((fuente) => `[${fuente.n}] ${fuente.titulo}: ${fuente.notas.slice(0, recorte)}`)
+    .map((fuente) => {
+      const responde = fuente.aspectos?.length ? ` (subpreguntas ${fuente.aspectos.join(", ")})` : "";
+      return `[${fuente.n}]${responde} ${fuente.titulo}: ${fuente.notas.slice(0, recorte)}`;
+    })
     .join("\n");
+  const subpreguntas = conversacion.aspectos?.length
+    ? `
+Subpreguntas de la investigación (el informe tiene que responderlas todas; sirven de guía para armar las secciones, y junto a cada fuente van las que ayuda a responder):
+${conversacion.aspectos.map((aspecto, i) => `${i + 1}. ${aspecto}`).join("\n")}
+`
+    : "";
   return [
     { role: "system", content: `${base()} ${SOLO_JSON}` },
     {
@@ -244,11 +334,12 @@ export function promptIndice(conversacion) {
 ${conversacion.tema}
 """
 
+${subpreguntas}
 Se reunieron ${conversacion.fuentes.length} fuentes. Número, título y comienzo de las notas de cada una:
 ${resumenes}
 
 Organiza un informe exhaustivo en secciones:
-- Entre 6 y ${maximo} secciones, en un orden lógico de lectura, que cubran todo lo que aportan las fuentes. Sin secciones de resumen, conclusiones ni fuentes: se escriben aparte.
+- Entre ${minimo} y ${maximo} secciones, en un orden lógico de lectura, que cubran todo lo que aportan las fuentes. Sin secciones de resumen, conclusiones ni fuentes: se escriben aparte.
 - Asigna a cada sección los números de las fuentes que le sirven (una fuente puede ir en varias). Cada fuente en al menos una sección; ninguna sección con más de 40.
 - Si el pedido indica formato de entrega o aspectos a cubrir, las secciones deben cumplirlo (por ejemplo, una sección con la tabla comparativa pedida). Una recomendación final va en las conclusiones, no en una sección.
 - Nada sobre lo que el pedido pide excluir.
@@ -284,6 +375,7 @@ Escribe solo esta sección, en Markdown:
 - Desarrolla con todo el detalle concreto de las notas (cifras, fechas, nombres, comparaciones). Usa tablas cuando compares opciones o datos.
 - ${GRAFICOS}
 - Cada afirmación lleva el número de su fuente entre corchetes, por ejemplo [3] o [1][4], usando solo los números de estas notas.
+- ${CONFIABILIDAD}
 - No inventes datos, fuentes ni enlaces. Sin introducción general, conclusiones del informe ni lista de fuentes.
 - ${RESPETAR_PEDIDO}`,
     },

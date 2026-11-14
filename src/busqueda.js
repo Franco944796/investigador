@@ -57,10 +57,26 @@ export function figurasDe(imagenes) {
 
 const conLimite = (signal) => AbortSignal.any([signal, AbortSignal.timeout(LIMITE_MS)].filter(Boolean));
 
-export function crearBuscador({ tavilyClave }) {
-  let turnoDuckDuckGo = Promise.resolve();
+const sitioDe = (url) => {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return "";
+  }
+};
 
-  async function conTavily(consulta, cantidad, signal, dominios) {
+// Solo se descarta la cola muy lejos del mejor resultado. Con un corte a la mitad se perdían
+// fuentes buenas: en una búsqueda real, eia.gov e iea.org tenían 0,32 frente a 0,75 del primero.
+const CORTE_DE_PUNTAJE = 0.3;
+
+export function crearBuscador({ tavilyClave, excluidos = [] }) {
+  let turnoDuckDuckGo = Promise.resolve();
+  const excluido = (url) => {
+    const sitio = sitioDe(url);
+    return excluidos.some((dominio) => sitio === dominio || sitio.endsWith(`.${dominio}`));
+  };
+
+  async function conTavily(consulta, cantidad, signal, dominios, reciente) {
     const respuesta = await fetch("https://api.tavily.com/search", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${tavilyClave}` },
@@ -74,19 +90,26 @@ export function crearBuscador({ tavilyClave }) {
         // Mismo costo (1 crédito): trae las imágenes de cada resultado para los gráficos del informe.
         include_images: true,
         include_image_descriptions: true,
-        ...(dominios?.length && { include_domains: dominios }),
+        ...(reciente && { time_range: "year" }),
+        ...(dominios?.length
+          ? { include_domains: dominios }
+          : excluidos.length && { exclude_domains: excluidos }),
       }),
       signal: conLimite(signal),
     });
     if (!respuesta.ok) throw new Error(`Tavily respondió ${respuesta.status}`);
     const datos = await respuesta.json();
-    return (datos.results ?? []).map((resultado) => ({
-      titulo: resultado.title ?? "",
-      url: resultado.url,
-      resumen: resultado.content ?? "",
-      contenido: (resultado.raw_content ?? "").replace(/\n{3,}/g, "\n\n").trim(),
-      imagenes: figurasDe(resultado.images),
-    }));
+    const resultados = datos.results ?? [];
+    const mejor = Math.max(0, ...resultados.map((resultado) => resultado.score ?? 0));
+    return resultados
+      .filter((resultado) => (resultado.score ?? mejor) >= mejor * CORTE_DE_PUNTAJE)
+      .map((resultado) => ({
+        titulo: resultado.title ?? "",
+        url: resultado.url,
+        resumen: resultado.content ?? "",
+        contenido: (resultado.raw_content ?? "").replace(/\n{3,}/g, "\n\n").trim(),
+        imagenes: figurasDe(resultado.images),
+      }));
   }
 
   // En serie y espaciadas: DuckDuckGo bloquea las ráfagas de pedidos.
@@ -106,11 +129,13 @@ export function crearBuscador({ tavilyClave }) {
     return turno;
   }
 
-  // Con `dominios`, la búsqueda se limita a esos sitios.
-  return async function buscar(consulta, { cantidad, signal, dominios }) {
+  // Con `dominios`, la búsqueda se limita a esos sitios (y ahí no rige la lista de excluidos: si
+  // el pedido nombra un sitio, se respeta). `reciente` limita al último año.
+  return async function buscar(consulta, { cantidad, signal, dominios, reciente }) {
+    const permitido = (resultado) => dominios?.length || !excluido(resultado.url);
     if (tavilyClave) {
       try {
-        const resultados = await conTavily(consulta, cantidad, signal, dominios);
+        const resultados = (await conTavily(consulta, cantidad, signal, dominios, reciente)).filter(permitido);
         if (resultados.length) return { motor: "Tavily", resultados };
       } catch (error) {
         if (signal?.aborted) throw error;
@@ -119,7 +144,7 @@ export function crearBuscador({ tavilyClave }) {
     }
     const sitios = dominios?.length ? ` ${dominios.map((dominio) => `site:${dominio}`).join(" OR ")}` : "";
     const resultados = await conDuckDuckGo(consulta + sitios, signal);
-    return { motor: "DuckDuckGo", resultados: resultados.slice(0, cantidad) };
+    return { motor: "DuckDuckGo", resultados: resultados.filter(permitido).slice(0, cantidad) };
   };
 }
 
@@ -154,6 +179,8 @@ export function deOpenAlex(obra) {
     resumen: ficha,
     // Sin resumen no hay qué analizar: se intenta leer la página del artículo.
     contenido: resumen ? ficha : "",
+    tipo: "académico",
+    ...(obra.publication_year && { fecha: String(obra.publication_year) }),
   };
 }
 
@@ -169,9 +196,22 @@ const CAMPOS_OPENALEX = [
   "abstract_inverted_index",
 ].join(",");
 
-async function conOpenAlex(consulta, { cantidad, signal, clave, filtro }) {
+const PAUSA_SEMANTICA_MS = 1100;
+let turnoSemantico = Promise.resolve();
+
+// OpenAlex admite una búsqueda semántica por segundo: se hacen en fila.
+function enTurnoSemantico(tarea) {
+  const turno = turnoSemantico.then(tarea);
+  turnoSemantico = turno.then(
+    () => esperar(PAUSA_SEMANTICA_MS),
+    () => esperar(PAUSA_SEMANTICA_MS),
+  );
+  return turno;
+}
+
+async function pedirOpenAlex(parametro, consulta, { cantidad, signal, clave, filtro }) {
   const url = new URL("https://api.openalex.org/works");
-  url.searchParams.set("search", consulta);
+  url.searchParams.set(parametro, consulta);
   url.searchParams.set("per_page", String(cantidad));
   url.searchParams.set("select", CAMPOS_OPENALEX);
   // Sin resumen casi nunca se puede analizar: la página de la editorial suele estar cerrada.
@@ -181,6 +221,18 @@ async function conOpenAlex(consulta, { cantidad, signal, clave, filtro }) {
   if (!respuesta.ok) throw new Error(`OpenAlex respondió ${respuesta.status}`);
   const { results = [] } = await respuesta.json();
   return results.map(deOpenAlex);
+}
+
+// La búsqueda semántica entiende frases completas; la común exige que estén todas las palabras
+// (una consulta larga o con un año de más no devuelve nada). Si la semántica falla, queda la común.
+async function conOpenAlex(consulta, opciones) {
+  try {
+    const resultados = await enTurnoSemantico(() => pedirOpenAlex("search.semantic", consulta, opciones));
+    if (resultados.length) return resultados;
+  } catch (error) {
+    if (opciones.signal?.aborted) throw error;
+  }
+  return pedirOpenAlex("search", consulta, opciones);
 }
 
 // Google Scholar no tiene API y prohíbe las consultas automáticas; OpenAlex cubre lo mismo con
@@ -235,8 +287,11 @@ export function crearBuscadorDeLibros({ claveOpenAlex, claveGoogleBooks }) {
       claveGoogleBooks ? conGoogleBooks(consulta, cantidad - mitad, signal) : Promise.resolve([]),
     ]);
     if (signal?.aborted) throw signal.reason;
-    if (abiertos.status === "rejected" && google.status === "rejected") throw abiertos.reason;
-    const resultados = [abiertos, google].flatMap((parte) => (parte.status === "fulfilled" ? parte.value : []));
-    return { motor: "libros", resultados };
+    const resultados = [abiertos, google].flatMap((parte) =>
+      parte.status === "fulfilled" ? parte.value : [],
+    );
+    // Un fallo que deja la búsqueda vacía tiene que verse como fallo, no como «sin resultados».
+    if (!resultados.length && abiertos.status === "rejected") throw abiertos.reason;
+    return { motor: "libros", resultados: resultados.map((libro) => ({ tipo: "libro", ...libro })) };
   };
 }

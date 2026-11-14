@@ -4,9 +4,12 @@ import {
   consultasDe,
   crearConversacion,
   crearInvestigador,
+  interpretarNotas,
+  parecidas,
   porTurnos,
   seccionesDe,
 } from "../src/investigador.js";
+import { promptRevision } from "../src/prompts.js";
 
 const OPCIONES = {
   consultasIniciales: 1,
@@ -371,4 +374,164 @@ test("antes del mínimo de búsquedas no acepta que ya alcanza y pide profundiza
   await investigador.investigar(conversacion, flujoDe([]));
   assert.deepEqual(revisiones, [true, true, false], "exige hasta llegar a 6 y después acepta");
   assert.equal(conversacion.consultas.length, 6);
+});
+
+test("consultas: site: pasa a ser el filtro, se respeta el destino y lo reciente", () => {
+  assert.deepEqual(
+    consultasDe([
+      "site:iea.org solar PV market report",
+      { texto: "perovskite tandem stability", destino: "Académico", idioma: "en" },
+      { texto: "precio módulos", reciente: true, destino: "inventado" },
+    ]),
+    [
+      { texto: "solar PV market report", destino: "sitios", dominios: ["iea.org"] },
+      { texto: "perovskite tandem stability", idioma: "en", destino: "academico" },
+      { texto: "precio módulos", reciente: true },
+    ],
+  );
+});
+
+test("el año en curso se quita de la consulta y se pide lo reciente; otros años quedan", () => {
+  const anio = new Date().getFullYear();
+  assert.deepEqual(
+    consultasDe([`bomba de calor COP Europa ${anio}`, `capacidad solar 2010 ${anio}`, "precios 2019", String(anio)]),
+    [
+      { texto: "bomba de calor COP Europa", reciente: true },
+      { texto: `capacidad solar 2010 ${anio}` },
+      { texto: "precios 2019" },
+      { texto: String(anio) },
+    ],
+  );
+});
+
+test("consultas casi iguales se reconocen aunque cambie el orden o el año", () => {
+  assert.ok(parecidas("solar PV LCOE trend 2010 2026", "2026 PV LCOE global trend"));
+  assert.ok(parecidas("光伏度电成本 趋势 2026", "光伏度电成本趋势"));
+  assert.ok(!parecidas("solar PV LCOE trend", "solar module price history"));
+  assert.ok(!parecidas("web 1", "web 2"), "con una sola palabra clave solo vale la igualdad");
+});
+
+test("notas: el encabezado da fecha, tipo y subpreguntas; sin encabezado todo es texto", () => {
+  assert.deepEqual(
+    interpretarNotas("**Fecha:** marzo de 2025 (2025-03)\nTipo: Académico\nAspectos: 2, 5 y 2\nNotas: Dato [x].\nOtra línea."),
+    { notas: "Dato [x].\nOtra línea.", aspectos: [2, 5], fecha: "2025-03", tipo: "académico" },
+  );
+  assert.deepEqual(interpretarNotas("Fecha: desconocida\nTipo: raro\nAspectos: ninguno\nNotas: Texto."), {
+    notas: "Texto.",
+    aspectos: [],
+  });
+  assert.deepEqual(interpretarNotas("Solo un párrafo.\nFecha: no es encabezado"), {
+    notas: "Solo un párrafo.\nFecha: no es encabezado",
+    aspectos: [],
+  });
+  assert.equal(interpretarNotas("IRRELEVANTE").notas, "IRRELEVANTE");
+});
+
+test("cada dirigida va a su destino; si un buscador falla se avisa, va a la web y se deja de usar", async () => {
+  const web = [];
+  const enSitios = [];
+  const libros = [];
+  let ronda = 0;
+  const investigador = crearInvestigador({
+    llm: {
+      ...llmFijo,
+      completar: async () => "Fecha: 2024\nTipo: prensa\nAspectos: 1\nNotas: Dato útil.",
+      completarJSON: async (mensajes) => {
+        if (mensajes.at(-1).content.includes('"completo"')) {
+          ronda++;
+          return {
+            completo: false,
+            consultas: [["precios regionales", "fabricantes líderes"][ronda - 1]],
+            dirigidas: [
+              { texto: ["perovskita estabilidad", "tándem eficiencia"][ronda - 1], destino: "academico" },
+            ],
+            aspectos_nuevos: ronda === 1 ? ["¿Y los riesgos?"] : [],
+          };
+        }
+        return {
+          aspectos: ["¿Cuánto cuesta?"],
+          consultas: ["costo general", "costo general 2026", "panorama mundial"],
+          dirigidas: [
+            { texto: "site:iea.org informe de mercado", destino: "academico" },
+            { texto: "historia de la energía", destino: "libros" },
+            { texto: "paper uno", destino: "academico" },
+          ],
+          sitios: ["iea.org"],
+          academico: true,
+          libros: true,
+        };
+      },
+    },
+    opciones: { ...OPCIONES, consultasIniciales: 6, consultasPorRonda: 2, rondasExtra: 2, maxBusquedas: 40 },
+    buscar: async (consulta, { dominios }) => {
+      (dominios ? enSitios : web).push(consulta);
+      return { resultados: [{ titulo: consulta, url: `https://a.test/${encodeURIComponent(consulta)}`, contenido: LARGO }] };
+    },
+    buscarAcademico: async () => {
+      throw new Error("OpenAlex respondió 429");
+    },
+    buscarLibros: async (consulta) => {
+      libros.push(consulta);
+      return { resultados: [{ titulo: consulta, url: "https://libros.test/1", contenido: LARGO, tipo: "libro" }] };
+    },
+    leerPagina: async () => assert.fail("no hace falta leer"),
+  });
+
+  const eventos = [];
+  const conversacion = crearConversacion("id", "ana", "Pregunta: costos");
+  await investigador.investigar(conversacion, flujoDe(eventos));
+
+  assert.deepEqual(enSitios, ["informe de mercado"], "la de site: va al sitio aunque dijera academico");
+  assert.deepEqual(libros, ["historia de la energía"]);
+  assert.deepEqual(
+    web,
+    [
+      "costo general",
+      "panorama mundial",
+      "paper uno",
+      "precios regionales",
+      "perovskita estabilidad",
+      "fabricantes líderes",
+      "tándem eficiencia",
+    ],
+    "sin la casi repetida; las de papers van a la web cuando OpenAlex falla",
+  );
+  const avisos = eventos.filter((e) => e.tipo === "aviso").map((e) => e.datos.texto);
+  assert.equal(avisos.filter((texto) => /artículos académicos no respondió \(OpenAlex respondió 429\)/.test(texto)).length, 1);
+  assert.equal(conversacion.destinos.academico, false);
+  assert.deepEqual(conversacion.aspectos, ["¿Cuánto cuesta?", "¿Y los riesgos?"]);
+  const fuente = conversacion.fuentes.find((f) => f.url === "https://libros.test/1");
+  assert.deepEqual(
+    { tipo: fuente.tipo, fecha: fuente.fecha, aspectos: fuente.aspectos, notas: fuente.notas },
+    { tipo: "libro", fecha: "2024", aspectos: [1], notas: "Dato útil." },
+    "el tipo que da el buscador vale más que el del modelo",
+  );
+});
+
+test("la revisión ve qué rindió cada búsqueda y la cobertura de cada subpregunta", () => {
+  const conversacion = {
+    tema: "Tema",
+    consultas: ["costo solar", "papers perovskita", "sitio caído"],
+    rendimiento: [
+      { destino: "web", idioma: "es", nuevas: 8, leidas: 6 },
+      { destino: "academico", idioma: "en", nuevas: 0, leidas: 0 },
+      { destino: "sitios", nuevas: 0, leidas: 0, fallo: true },
+    ],
+    aspectos: ["¿Cuánto cuesta?", "¿Quién fabrica?"],
+    fuentes: [
+      { n: 1, titulo: "A", url: "https://a.test", notas: "Nota uno", tipo: "blog", fecha: "2021", aspectos: [1] },
+      { n: 2, titulo: "B", url: "https://b.test", notas: "Nota dos", tipo: "oficial", fecha: "2025-03", aspectos: [1] },
+      { n: 3, titulo: "C", url: "https://c.test", notas: "Nota tres" },
+    ],
+    idiomas: [{ codigo: "es", nombre: "español" }],
+  };
+  const texto = promptRevision(conversacion, 4).at(-1).content;
+  assert.ok(texto.includes("- [web·es] costo solar → 6 útiles de 8 páginas nuevas"));
+  assert.ok(texto.includes("- [academico·en] papers perovskita → sin páginas nuevas"));
+  assert.ok(texto.includes("- [sitios] sitio caído → falló"));
+  assert.ok(texto.includes("1. ¿Cuánto cuesta? — 2 fuentes, 1 oficiales, académicas o libros; la más reciente, de 2025-03"));
+  assert.ok(texto.indexOf("[2] (oficial, 2025-03) Nota dos") < texto.indexOf("[1] (blog, 2021) Nota uno"));
+  assert.ok(texto.includes("2. ¿Quién fabrica? — 0 fuentes"));
+  assert.ok(texto.includes("Fuentes que no responden a ninguna subpregunta: 1"));
+  assert.ok(texto.includes('"aspectos_nuevos"'));
 });

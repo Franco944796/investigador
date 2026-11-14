@@ -8,7 +8,9 @@ import { VENDOR } from "./vendor.js";
 
 const LATIDO_MS = 15000;
 const MAX_TEXTO = 2000;
-const GUARDADO_MS = 30000;
+// Con cientos de fuentes el registro pesa cerca de medio megabyte: reescribirlo cada 30 s durante
+// horas generaba más de 100 MB de escrituras en Neon por investigación.
+const GUARDADO_MS = 120000;
 const RETENER_EN_MEMORIA_MS = 10 * 60 * 1000;
 const ESTADO_FINAL = { completa: "lista", fallida: "fallida", cancelada: "cancelada" };
 
@@ -110,6 +112,7 @@ function aRegistro(conversacion) {
       informe: conversacion.informe,
       intercambios: conversacion.intercambios,
       eventos: conversacion.eventos,
+      aspectos: conversacion.aspectos,
     },
   };
 }
@@ -173,6 +176,8 @@ export function crearApp({ config, acceso, investigador, almacen, generarPDF }) 
   }
 
   function registrar(conversacion, tipo, datos = {}) {
+    // Con la hora de cada etapa se puede ver después en qué se fue el tiempo de una investigación.
+    if (tipo === "etapa") datos = { ...datos, hora: Date.now() };
     const ultimo = conversacion.eventos.at(-1);
     if (tipo === "texto" && ultimo?.tipo === "texto") {
       ultimo.datos = { delta: ultimo.datos.delta + datos.delta };
@@ -461,7 +466,13 @@ export function crearApp({ config, acceso, investigador, almacen, generarPDF }) 
       creada: conversacion.creada,
       archivo: nombreDeArchivo(conversacion.tema).replace(/\.pdf$/, ""),
       informe: conversacion.informe,
-      fuentes: conversacion.fuentes.map(({ n, url, titulo }) => ({ n, url, titulo })),
+      fuentes: conversacion.fuentes.map(({ n, url, titulo, tipo, fecha }) => ({
+        n,
+        url,
+        titulo,
+        ...(tipo && { tipo }),
+        ...(fecha && { fecha }),
+      })),
       intercambios: conversacion.intercambios,
       datos: datosDeInvestigacion(conversacion.eventos),
     });

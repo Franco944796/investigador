@@ -51,7 +51,10 @@ try {
 }
 
 const llm = crearLLM(config.proveedores, { limiteMs: config.limiteLLMMs });
-const buscar = crearBuscador({ tavilyClave: config.tavilyClave });
+const buscar = crearBuscador({
+  tavilyClave: config.tavilyClave,
+  excluidos: config.dominiosExcluidos,
+});
 const buscarAcademico = crearBuscadorAcademico({ clave: config.openalexClave });
 const buscarLibros = crearBuscadorDeLibros({
   claveOpenAlex: config.openalexClave,

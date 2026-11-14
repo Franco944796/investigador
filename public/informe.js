@@ -27,6 +27,9 @@ function sitioDe(url) {
   }
 }
 
+const datosDeFuente = (fuente) =>
+  [sitioDe(fuente.url), fuente.tipo, fuente.fecha].filter(Boolean).join(" · ");
+
 function duracion(desde, hasta) {
   if (!desde || !hasta) return "";
   const minutos = Math.round((hasta - desde) / 60000);
@@ -116,7 +119,7 @@ function listaDeFuentes(citadas) {
         rel: "noopener noreferrer",
       }),
       " ",
-      elemento("span", { className: "sitio", textContent: sitioDe(fuente.url) }),
+      elemento("span", { className: "sitio", textContent: datosDeFuente(fuente) }),
     );
     lista.append(item);
   }
@@ -189,7 +192,7 @@ function mostrarVista(cita) {
   citaActiva = cita;
   vista.replaceChildren(
     elemento("p", { className: "titulo-fuente", textContent: `${fuente.n}. ${fuente.titulo || fuente.url}` }),
-    elemento("span", { className: "sitio", textContent: sitioDe(fuente.url) }),
+    elemento("span", { className: "sitio", textContent: datosDeFuente(fuente) }),
     elemento(
       "div",
       { className: "enlaces" },

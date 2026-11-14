@@ -21,6 +21,7 @@ Resumen breve del tema con una cita [1].
 const SEGUIMIENTO = "Según el informe, la opción B duplica a la A [2].";
 
 const PLAN_MULTILINGUE = {
+  aspectos: ["¿Qué opciones hay?", "¿Cuánto rinde cada una?"],
   idiomas: [
     { codigo: "es", nombre: "español" },
     { codigo: "en", nombre: "inglés" },
@@ -52,6 +53,7 @@ function responder(cuerpo, estado) {
       datos: [
         { etiqueta: "A", valor: 10, cita: 1 },
         { etiqueta: "B", valor: 20, cita: 2 },
+        { etiqueta: "C", valor: 15, cita: 2 },
       ],
     };
     const imagen = { tipo: "imagen", url: "https://ejemplo.invalid/plano.png", pie: "Plano de la celda", cita: 2 };
@@ -62,6 +64,7 @@ function responder(cuerpo, estado) {
       datos: [
         { pais: "ARG", valor: 10, cita: 1 },
         { pais: "CHN", valor: 20, cita: 2 },
+        { pais: "DEU", valor: 15, cita: 2 },
       ],
     };
     return `## Comparación\n\n| Opción | Dato |\n| --- | --- |\n| A | 10 [1] |\n| B | 20 [2] |\n\n\`\`\`grafico\n${JSON.stringify(grafico)}\n\`\`\`\n\n\`\`\`grafico\n${JSON.stringify(mapa)}\n\`\`\`\n\n\`\`\`grafico\n${JSON.stringify(imagen)}\n\`\`\``;
@@ -72,7 +75,9 @@ function responder(cuerpo, estado) {
     return '```json\n{"consultas": ["primera consulta", "segunda consulta"]}\n```';
   }
   if (ultimo.includes("IRRELEVANTE")) {
-    return ultimo.includes("/irrelevante") ? "IRRELEVANTE" : "Notas: la página aporta el dato 10 y el dato 20.";
+    return ultimo.includes("/irrelevante")
+      ? "IRRELEVANTE"
+      : "Fecha: 2025-03\nTipo: oficial\nAspectos: 2\nNotas: la página aporta el dato 10 y el dato 20.";
   }
   if (ultimo.includes('"completo"')) {
     estado.revisiones++;
