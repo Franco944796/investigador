@@ -101,6 +101,21 @@ que la PC de Franco esté prendida, sin costo, con historial guardado por person
 
 ## En curso
 
+- Exhaustiva de aire comprimido (id 6a4f271f…, lanzada por Franco el 2026-11-14): terminó en 30
+  min con 43 búsquedas por un error: el filtro de consultas casi iguales dejó una ronda en cero y
+  el bucle cortó antes del mínimo de 60. Además se fue de tema (calificación de satélites),
+  libros rindió 0 de 12 y el modelo pegó «2024» a las consultas. Leyó 244 páginas en 17 min.
+- Decisiones de Franco (2026-11-14), en curso sin push:
+  1. No cortar antes del mínimo: reintentar la revisión mostrando las consultas descartadas;
+     terminar solo tras dos rondas seguidas sin consultas nuevas.
+  2. Las rondas no se alejan del pedido original (consultas y subpreguntas nuevas).
+  3. Quitar de las consultas los años recientes que el pedido no nombra.
+  4. OpenAlex con presupuesto propio: hasta 500 búsquedas de papers/libros por investigación,
+     aparte de las 100 de Tavily (web y sitios); aviso de cuántas quedan hoy o de que no quedan.
+  5. «Ver informe» con modo oscuro: botón, arranca según el sistema y recuerda; el HTML
+     descargado sale en el tema que se esté viendo; al imprimir, siempre claro.
+  Para leer más de 3 a la vez: variable `TAREAS_EN_PARALELO` en Render (sin tocar código).
+
 - Exhaustiva de prueba (id 33d45e5e…, energía solar) terminada: 8 h 12 min, 100 búsquedas (web
   53, papers 21, sitios 13, libros 13), 348 fuentes leídas, 13 secciones, PDF de 43 páginas, 31
   gráficos sin JSON roto (14 barras, 9 líneas, 5 líneas de tiempo, 1 mapa, 1 diagrama, 1
@@ -216,16 +231,15 @@ que la PC de Franco esté prendida, sin costo, con historial guardado por person
 
 ## Pendiente
 
-1. Franco: push de todo lo de la revisión (sin push desde fa5c014). No hay nada corriendo en
-   Render.
-2. Franco: clave de OpenAlex (openalex.org → Settings → API key) en `.env` y en Render →
-   Environment (`OPENALEX_CLAVE`); opcional `GOOGLE_BOOKS_CLAVE`. Sin clave, papers y libros
-   dejaron de responder en Render tras 2 búsquedas.
-3. Verificar en Render con una Exhaustiva real: subpreguntas en el árbol, destinos, avisos de
-   fallo, fecha y tipo en las fuentes, gráficos depurados, y las horas de cada etapa (la de
-   prueba tardó 8 h 12 min sin esperas por cupo: ver dónde se va el tiempo).
-4. Prueba del bloqueo por intentos en Render (8 códigos malos; Franco pidió hacerla al final).
-5. Despertar de Render tras 15 min sin uso desde la página de Pages.
+1. Exhaustiva real en Render sobre propulsión con aire comprimido (pedido de Franco,
+   2026-11-14): el pedido ya está redactado y mostrado; lanzarla SOLO cuando Franco dé la orden.
+   Al terminar, revisar: subpreguntas en el árbol, destinos, avisos de fallo, fecha y tipo en
+   las fuentes, gráficos depurados y las horas de cada etapa (la anterior tardó 8 h 12 min).
+2. Prueba del bloqueo por intentos en Render (8 códigos malos; Franco pidió hacerla al final).
+3. Despertar de Render tras 15 min sin uso desde la página de Pages.
+
+Hecho el 2026-11-14: push a879307 publicado en Render y Pages (todo lo de la revisión);
+`OPENALEX_CLAVE` cargada en Render y en `.env` (probada: 1 USD por día, búsqueda con resultados).
 
 ## Archivos clave y comandos
 

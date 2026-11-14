@@ -4,7 +4,13 @@ import { join } from "node:path";
 import { Acceso } from "./src/acceso.js";
 import { conectarPostgres, crearAlmacenMemoria, crearAlmacenSQL } from "./src/almacen.js";
 import { crearApp } from "./src/app.js";
-import { crearBuscador, crearBuscadorAcademico, crearBuscadorDeLibros } from "./src/busqueda.js";
+import {
+  crearBuscador,
+  crearBuscadorAcademico,
+  crearBuscadorDeLibros,
+  saldoDeOpenAlex,
+  saldoDeTavily,
+} from "./src/busqueda.js";
 import { leerConfig } from "./src/config.js";
 import { crearInvestigador } from "./src/investigador.js";
 import { leerPagina } from "./src/lector.js";
@@ -65,6 +71,7 @@ const investigador = crearInvestigador({
   buscar,
   buscarAcademico,
   buscarLibros,
+  saldoAcademico: () => saldoDeOpenAlex(config.openalexClave),
   leerPagina,
   opciones: config.investigacion,
 });

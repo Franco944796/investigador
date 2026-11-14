@@ -295,3 +295,35 @@ export function crearBuscadorDeLibros({ claveOpenAlex, claveGoogleBooks }) {
     return { motor: "libros", resultados: resultados.map((libro) => ({ tipo: "libro", ...libro })) };
   };
 }
+
+const COSTO_OPENALEX_USD = 0.001;
+
+// Cuántas búsquedas quedan hoy en OpenAlex con esta clave y en cuánto se renuevan (o null si no
+// se puede saber: sin clave el saldo es compartido por IP y no se informa).
+export async function saldoDeOpenAlex(clave, { signal } = {}) {
+  if (!clave) return null;
+  const url = new URL("https://api.openalex.org/rate-limit");
+  url.searchParams.set("api_key", clave);
+  const respuesta = await fetch(url, { headers: { "User-Agent": AGENTE }, signal: conLimite(signal) });
+  if (!respuesta.ok) throw new Error(`OpenAlex respondió ${respuesta.status}`);
+  const limite = (await respuesta.json()).rate_limit ?? {};
+  const costo = limite.endpoint_costs_usd?.search ?? COSTO_OPENALEX_USD;
+  const dolares = (limite.daily_remaining_usd ?? 0) + (limite.prepaid_remaining_usd ?? 0);
+  return {
+    busquedas: Math.max(0, Math.floor(dolares / costo + 1e-6)),
+    renuevaEnSegundos: limite.resets_in_seconds ?? null,
+  };
+}
+
+// Búsquedas web usadas y disponibles en el mes del plan de Tavily.
+export async function saldoDeTavily(clave, { signal } = {}) {
+  if (!clave) return null;
+  const respuesta = await fetch("https://api.tavily.com/usage", {
+    headers: { Authorization: `Bearer ${clave}` },
+    signal: conLimite(signal),
+  });
+  if (!respuesta.ok) throw new Error(`Tavily respondió ${respuesta.status}`);
+  const { account = {} } = await respuesta.json();
+  if (typeof account.plan_limit !== "number") return null;
+  return { usadas: account.plan_usage ?? 0, limite: account.plan_limit };
+}

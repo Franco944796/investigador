@@ -71,8 +71,12 @@ function dominioDe(valor) {
   return dominio;
 }
 
-// Las consultas llegan como textos o como {idioma, texto, destino, reciente}.
-export function consultasDe(valor) {
+const esLibre = (destino) => destino === "academico" || destino === "libros";
+const claseDe = (destino) => (esLibre(destino) ? "libres" : destino === "sitios" ? "sitios" : "web");
+
+// Las consultas llegan como textos o como {idioma, texto, destino, reciente}. `aniosDelPedido`
+// son los años que nombra el pedido: esos no se tocan.
+export function consultasDe(valor, aniosDelPedido = new Set()) {
   if (!Array.isArray(valor)) return [];
   const vistas = new Set();
   return valor.flatMap((consulta) => {
@@ -87,14 +91,22 @@ export function consultasDe(valor) {
       .replace(/\bsite:\S+/gi, " ")
       .replace(/\s+/g, " ")
       .trim();
-    // Los modelos le pegan el año en curso a casi todas las consultas aunque se les pida que no
-    // (59 de 67 en una prueba), y eso angosta la búsqueda: se quita y se pide «lo reciente».
+    // Los modelos le pegan un año reciente a casi todas las consultas aunque se les pida que no
+    // (59 de 67 en una prueba), y eso angosta la búsqueda: se quita y se pide «lo reciente». Se
+    // respetan los años que nombra el pedido (salvo el año en curso) y los rangos históricos.
     let reciente = consulta?.reciente === true;
-    const anios = texto.match(/\b(19|20)\d\d\b/g) ?? [];
-    if (anios.length === 1 && anios[0] === String(new Date().getFullYear())) {
-      const sinAnio = texto.replace(anios[0], " ").replace(/\s+/g, " ").trim();
-      if (sinAnio.length >= 6) {
-        texto = sinAnio;
+    const actual = new Date().getFullYear();
+    const anios = (texto.match(/\b(19|20)\d\d\b/g) ?? []).map(Number);
+    const sobran = anios.filter(
+      (anio) => anio >= actual - 3 && (anio === actual || !aniosDelPedido.has(anio)),
+    );
+    if (sobran.length && sobran.length === anios.length) {
+      const sinAnios = texto
+        .replace(/\b(19|20)\d\d\b/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+      if (sinAnios.length >= 6) {
+        texto = sinAnios;
         reciente = true;
       }
     }
@@ -369,6 +381,7 @@ export function crearInvestigador({
   buscar,
   buscarAcademico,
   buscarLibros,
+  saldoAcademico,
   leerPagina,
   opciones,
 }) {
@@ -519,7 +532,6 @@ export function crearInvestigador({
 
     // Se intercalan para que todas las consultas aporten fuentes antes de llegar al tope.
     const candidatas = [];
-    let nuevasDirigidas = 0;
     for (let puesto = 0; puesto < opciones.resultadosPorConsulta; puesto++) {
       for (const [indice, resultados] of porConsulta.entries()) {
         const resultado = resultados[puesto];
@@ -532,7 +544,6 @@ export function crearInvestigador({
           consultaTexto: consultas[indice].texto,
         });
         conversacion.rendimiento[numeros[indice] - 1].nuevas++;
-        if (consultas[indice].destino) nuevasDirigidas++;
       }
     }
     await enParalelo(candidatas, opciones.tareasEnParalelo, async (candidata) => {
@@ -541,7 +552,7 @@ export function crearInvestigador({
         conversacion.rendimiento[candidata.consulta - 1].leidas++;
       }
     });
-    return { dirigidas: consultas.filter((consulta) => consulta.destino).length, nuevasDirigidas };
+    return numeros.map((numero) => conversacion.rendimiento[numero - 1]);
   }
 
   const contextoDe = ({ emitir, signal }) => ({
@@ -554,69 +565,105 @@ export function crearInvestigador({
     const contexto = contextoDe(flujo);
     const { emitir } = contexto;
     const cupo = () => opciones.maxFuentes - conversacion.fuentes.length;
-    const busquedasRestantes = () =>
-      (opciones.maxBusquedas ?? Infinity) - conversacion.consultas.length;
-
-    // La mitad de las búsquedas puede ir a los sitios pedidos, al buscador académico o a libros
-    // (solo libros: una cuarta parte); si dejan de traer resultados nuevos, lo que queda va a la web.
-    const total = opciones.maxBusquedas ?? opciones.consultasIniciales * 2;
-    let dirigidasHechas = 0;
-    const dirigidasRestantes = () => {
-      const lista = activos(conversacion.destinos);
-      if (!lista.length || conversacion.destinos.agotados) return 0;
-      const tope = Math.floor(total / (lista.length === 1 && lista[0] === "libros" ? 4 : 2));
-      return tope - dirigidasHechas;
+    // Dos presupuestos: las búsquedas en la web y en sitios gastan la cuota mensual de Tavily; las
+    // de papers y libros van a OpenAlex, que tiene su propio saldo diario y su propio tope.
+    const hechas = (libres) =>
+      (conversacion.rendimiento ?? []).filter(
+        (registro) => registro && esLibre(registro.destino) === libres,
+      ).length;
+    const maxPagas = opciones.maxBusquedas ?? Infinity;
+    let maxLibres = opciones.maxAcademicas ?? Infinity;
+    const cuposDe = (pagas, libres) => {
+      const { destinos } = conversacion;
+      const quedan = Math.max(0, Math.min(pagas, maxPagas - hechas(false)));
+      // La mitad de las búsquedas pagas va a los sitios pedidos mientras traigan páginas nuevas.
+      const sitios =
+        destinos.dominios.length && !destinos.sitiosAgotados ? Math.floor(quedan / 2) : 0;
+      const conLibres = (destinos.academico || destinos.libros) && !destinos.libresAgotados;
+      return {
+        web: quedan - sitios,
+        sitios,
+        libres: conLibres ? Math.max(0, Math.min(libres, maxLibres - hechas(true))) : 0,
+      };
     };
-    const parteDirigida = () =>
-      activos(conversacion.destinos).join() === "libros" ? "Una cuarta parte" : "La mitad";
-    const reparto = (cantidad) => {
-      const solo = activos(conversacion.destinos).join() === "libros";
-      const parte = Math.floor(cantidad / (solo ? 4 : 2));
-      const dirigidas = Math.min(parte, Math.max(0, dirigidasRestantes()));
-      return { web: cantidad - dirigidas, dirigidas };
-    };
-    // Deja las consultas con su destino resuelto, sin las casi iguales a una ya hecha en el mismo
-    // buscador ni entre sí, y repartidas por idioma.
-    const filtrar = (lista, maximo, dirigidas = false) => {
-      const consultas = dirigidas
-        ? conDestino(consultasDe(lista), conversacion)
-        : consultasDe(lista).map((consulta) => sinDestinoInactivo(consulta, conversacion.destinos));
-      const hechas = (conversacion.rendimiento ?? []).filter(Boolean);
-      const aceptadas = [];
-      for (const consulta of porTurnos(consultas)) {
+    const aniosDelPedido = new Set((conversacion.tema.match(/\b(19|20)\d\d\b/g) ?? []).map(Number));
+    // Resuelve el destino de cada consulta propuesta, descarta las casi iguales a una ya hecha en
+    // el mismo buscador (o entre sí) y reparte el resto entre los cupos.
+    const repartir = (propuesta, cupos) => {
+      const candidatas = [
+        ...consultasDe(propuesta.consultas, aniosDelPedido).map((consulta) =>
+          sinDestinoInactivo(consulta, conversacion.destinos),
+        ),
+        ...conDestino(consultasDe(propuesta.dirigidas, aniosDelPedido), conversacion),
+      ];
+      const previas = (conversacion.rendimiento ?? []).filter(Boolean);
+      const tanda = { web: [], sitios: [], libres: [], descartadas: [] };
+      const lugar = (consulta) => {
+        const clase = claseDe(consulta.destino);
+        return tanda[clase].length < cupos[clase] ? tanda[clase] : null;
+      };
+      for (const consulta of porTurnos(candidatas)) {
         const destino = consulta.destino ?? "web";
-        const repetida = [...hechas, ...aceptadas].some(
+        const repetida = [...previas, ...tanda.web, ...tanda.sitios, ...tanda.libres].some(
           (otra) => (otra.destino ?? "web") === destino && parecidas(otra.texto, consulta.texto),
         );
-        if (!repetida) aceptadas.push(consulta);
+        if (repetida) {
+          tanda.descartadas.push(consulta.texto);
+          continue;
+        }
+        // Lo que no entra en el cupo de la web prueba suerte en un buscador dirigido con lugar.
+        const dirigida = lugar(consulta) || consulta.destino ? null : conDestino([consulta], conversacion)[0];
+        (lugar(consulta) ?? (dirigida?.destino ? lugar(dirigida) : null))?.push(
+          lugar(consulta) ? consulta : dirigida,
+        );
       }
-      return aceptadas.slice(0, maximo);
+      return tanda;
     };
+    const cantidadDe = (tanda) => tanda.web.length + tanda.sitios.length + tanda.libres.length;
     const textos = (lista) =>
       (Array.isArray(lista) ? lista : [])
         .filter((texto) => typeof texto === "string" && texto.trim())
         .map((texto) => texto.trim().slice(0, 200));
-    const buscarTanda = async (web, dirigidas) => {
-      const tanda = [...web, ...dirigidas];
-      const resultado = await incorporar(conversacion, tanda, contexto, cupo());
-      dirigidasHechas += resultado.dirigidas;
-      if (resultado.dirigidas && !resultado.nuevasDirigidas && !conversacion.destinos.agotados) {
-        conversacion.destinos.agotados = true;
+    let tandasLibresVacias = 0;
+    const buscarTanda = async (tanda) => {
+      const consultas = [...tanda.web, ...tanda.sitios, ...tanda.libres];
+      const registros = await incorporar(conversacion, consultas, contexto, cupo());
+      const sinNuevas = (clase) => {
+        const suyos = registros.filter((registro) => claseDe(registro.destino) === clase);
+        return suyos.length > 0 && suyos.every((registro) => !registro.nuevas);
+      };
+      const { destinos } = conversacion;
+      if (sinNuevas("sitios") && !destinos.sitiosAgotados) {
+        destinos.sitiosAgotados = true;
         emitir("aviso", {
           texto: "Los sitios indicados ya no traen resultados nuevos: sigo buscando en toda la web.",
         });
+      }
+      if (tanda.libres.length) tandasLibresVacias = sinNuevas("libres") ? tandasLibresVacias + 1 : 0;
+      if (tandasLibresVacias >= 2 && !destinos.libresAgotados) {
+        destinos.libresAgotados = true;
+        emitir("aviso", { texto: "Papers y libros ya no traen resultados nuevos: sigo solo con la web." });
       }
     };
 
     emitir("etapa", { texto: "Planificando la investigación" });
     conversacion.irrelevantesSeguidas = 0;
     conversacion.destinos = destinosDe(conversacion.tema);
-    let web = [];
-    let dirigidas = [];
-    const iniciales = Math.min(opciones.consultasIniciales, busquedasRestantes());
+    // El saldo de OpenAlex se consulta antes del plan: si hoy no queda, no se piden papers.
+    const saldo = saldoAcademico ? await saldoAcademico().catch(() => null) : null;
+    if (saldo) maxLibres = Math.min(maxLibres, saldo.busquedas);
+    let inicial = { web: [], sitios: [], libres: [], descartadas: [] };
+    const iniciales = [
+      opciones.consultasIniciales,
+      opciones.academicasIniciales ?? opciones.consultasIniciales,
+    ];
     try {
+      const previstos = cuposDe(...iniciales);
       const plan = await llm.completarJSON(
-        promptPlan(conversacion.tema, iniciales, { multilingue: opciones.multilingue }),
+        promptPlan(conversacion.tema, previstos.web + previstos.sitios, {
+          multilingue: opciones.multilingue,
+          libres: maxLibres > 0 ? iniciales[1] : 0,
+        }),
         contexto,
       );
       conversacion.destinos = destinosDe(conversacion.tema, plan.sitios);
@@ -628,72 +675,104 @@ export function crearInvestigador({
       if (conversacion.aspectos.length) emitir("aspectos", { lista: conversacion.aspectos });
       const todas = consultasDe([...(plan.consultas ?? []), ...(plan.dirigidas ?? [])]);
       if (opciones.multilingue) conversacion.idiomas = idiomasDe(plan.idiomas, todas);
-      const cupos = reparto(iniciales);
-      if (cupos.dirigidas) {
-        dirigidas = filtrar(plan.dirigidas, cupos.dirigidas, true);
-        web = filtrar(plan.consultas, iniciales - dirigidas.length);
-        // Si el modelo no separó las dirigidas, salen de sus propias consultas.
-        if (!dirigidas.length) {
-          dirigidas = conDestino(web.slice(cupos.web), conversacion);
-          web = web.slice(0, cupos.web);
-        }
-      } else {
-        web = filtrar([...(plan.consultas ?? []), ...(plan.dirigidas ?? [])], iniciales);
-      }
+      inicial = repartir(plan, cuposDe(...iniciales));
     } catch (error) {
       if (!(error instanceof ErrorFormato)) throw error;
     }
-    if (!web.length && !dirigidas.length) web = [{ texto: conversacion.tema }];
+    if (!cantidadDe(inicial)) inicial.web = [{ texto: conversacion.tema }];
 
     const idiomas =
       conversacion.idiomas?.length > 1 ? ` en ${nombresDe(conversacion.idiomas)}` : "";
     emitir("etapa", { texto: `Buscando y leyendo fuentes${idiomas}` });
-    if (dirigidasRestantes() > 0) {
+    const { destinos } = conversacion;
+    if (destinos.dominios.length) {
+      emitir("aviso", { texto: `La mitad de las búsquedas web va a: ${destinos.dominios.join(", ")}.` });
+    }
+    if (destinos.academico || destinos.libros) {
+      const donde = [
+        destinos.academico && "artículos académicos (OpenAlex, en lugar de Google Scholar)",
+        destinos.libros && "libros",
+      ]
+        .filter(Boolean)
+        .join(" y ");
+      const horas = saldo?.renuevaEnSegundos ? Math.max(1, Math.round(saldo.renuevaEnSegundos / 3600)) : null;
       emitir("aviso", {
-        texto: `${parteDirigida()} de las búsquedas va a: ${describirDestinos(conversacion.destinos)}.`,
+        texto:
+          maxLibres > 0
+            ? `Además busco ${donde}: hasta ${Number.isFinite(maxLibres) ? `${maxLibres} búsquedas` : "las búsquedas que hagan falta"}, aparte de las de la web${saldo ? ` (hoy quedan ${saldo.busquedas} en OpenAlex)` : ""}.`
+            : `Hoy no quedan búsquedas de ${donde} en OpenAlex${horas ? ` (se renuevan en unas ${horas} h)` : ""}: esta investigación usa solo la web.`,
       });
     }
-    await buscarTanda(web, dirigidas);
+    await buscarTanda(inicial);
 
+    // Por qué terminó la búsqueda, para avisarlo.
+    let motivo = "rondas";
+    let rondasVacias = 0;
     for (let ronda = 1; ronda <= opciones.rondasExtra && cupo() > 0; ronda++) {
-      if (!conversacion.fuentes.length || agotada(conversacion) || busquedasRestantes() <= 0) break;
-      const cupos = reparto(Math.min(opciones.consultasPorRonda, busquedasRestantes()));
+      if (!conversacion.fuentes.length) break;
+      if (agotada(conversacion)) {
+        motivo = "irrelevantes";
+        break;
+      }
+      const cupos = cuposDe(
+        opciones.consultasPorRonda,
+        opciones.academicasPorRonda ?? opciones.consultasPorRonda,
+      );
+      if (!cupos.web && !cupos.sitios && !cupos.libres) {
+        motivo = "presupuesto";
+        break;
+      }
       emitir("etapa", { texto: "Revisando qué falta cubrir" });
-      const exigir = conversacion.consultas.length < Math.min(opciones.minBusquedas ?? 0, total);
-      let nuevasWeb = [];
-      let nuevasDirigidas = [];
-      try {
-        const revision = await llm.completarJSON(
-          promptRevision(conversacion, cupos.web, cupos.dirigidas, { exigir }),
-          contexto,
-        );
-        if (exigir || revision.completo !== true) {
-          nuevasDirigidas = filtrar(revision.dirigidas, cupos.dirigidas, true);
-          nuevasWeb = filtrar(revision.consultas, cupos.web);
-          const nuevos = textos(revision.aspectos_nuevos).slice(0, 2);
+      const exigir =
+        cupos.web + cupos.sitios > 0 && hechas(false) < Math.min(opciones.minBusquedas ?? 0, maxPagas);
+      let tanda = { web: [], sitios: [], libres: [], descartadas: [] };
+      let completo = false;
+      // Si el filtro de repetidas deja la ronda vacía, se le pide otra vez al modelo mostrándole
+      // qué se descartó: cortar ahí terminaba la investigación antes del mínimo de búsquedas.
+      for (let intento = 0; intento < 2 && !cantidadDe(tanda) && !completo; intento++) {
+        try {
+          const revision = await llm.completarJSON(
+            promptRevision(conversacion, cupos, { exigir, descartadas: tanda.descartadas }),
+            contexto,
+          );
+          if (!exigir && revision.completo === true) {
+            completo = true;
+            break;
+          }
+          tanda = repartir(revision, cupos);
+          const nuevos = intento === 0 ? textos(revision.aspectos_nuevos).slice(0, 2) : [];
           if (conversacion.aspectos?.length && nuevos.length) {
             const sumados = nuevos.slice(0, MAX_ASPECTOS - conversacion.aspectos.length);
             conversacion.aspectos.push(...sumados);
             if (sumados.length) emitir("aspectos", { lista: sumados, nuevos: true });
           }
+        } catch (error) {
+          if (!(error instanceof ErrorFormato)) throw error;
         }
-      } catch (error) {
-        if (!(error instanceof ErrorFormato)) throw error;
       }
-      if (!nuevasWeb.length && !nuevasDirigidas.length) break;
+      if (completo) {
+        motivo = "completo";
+        break;
+      }
+      if (!cantidadDe(tanda)) {
+        if (++rondasVacias >= 2) {
+          motivo = "sin-novedades";
+          break;
+        }
+        continue;
+      }
+      rondasVacias = 0;
       emitir("etapa", { texto: `Profundizando (ronda ${ronda + 1})` });
-      await buscarTanda(nuevasWeb, nuevasDirigidas);
+      await buscarTanda(tanda);
     }
 
-    if (busquedasRestantes() <= 0) {
-      emitir("aviso", {
-        texto: `Se usaron las ${opciones.maxBusquedas} búsquedas previstas: redacto con lo encontrado.`,
-      });
-    } else if (agotada(conversacion)) {
-      emitir("aviso", {
-        texto: `Las últimas ${opciones.irrelevantesSeguidas} fuentes no aportaban al tema: dejo de buscar y redacto con lo encontrado.`,
-      });
-    }
+    const avisoFinal = {
+      presupuesto: `Se usaron las ${hechas(false)} búsquedas previstas${hechas(true) ? ` y ${hechas(true)} de papers y libros` : ""}: redacto con lo encontrado.`,
+      irrelevantes: `Las últimas ${opciones.irrelevantesSeguidas} fuentes no aportaban al tema: dejo de buscar y redacto con lo encontrado.`,
+      "sin-novedades":
+        "El modelo ya no propone búsquedas distintas de las que se hicieron: redacto con lo encontrado.",
+    }[motivo];
+    if (avisoFinal) emitir("aviso", { texto: avisoFinal });
 
     if (!conversacion.fuentes.length) {
       throw (

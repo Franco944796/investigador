@@ -79,9 +79,13 @@ export function leerConfig(env = process.env) {
       consultasIniciales: entero(env, "CONSULTAS_INICIALES", 25),
       resultadosPorConsulta: entero(env, "RESULTADOS_POR_CONSULTA", 8),
       // Las rondas sobran: lo que corta es maxBusquedas.
-      rondasExtra: entero(env, "RONDAS_EXTRA", 20),
+      rondasExtra: entero(env, "RONDAS_EXTRA", 60),
       consultasPorRonda: entero(env, "CONSULTAS_POR_RONDA", 8),
       maxBusquedas: entero(env, "MAX_BUSQUEDAS", 100),
+      // Papers y libros van a OpenAlex, que no gasta Tavily: tienen su propio tope por investigación.
+      maxAcademicas: entero(env, "MAX_ACADEMICAS", 500),
+      academicasIniciales: entero(env, "ACADEMICAS_INICIALES", 20),
+      academicasPorRonda: entero(env, "ACADEMICAS_POR_RONDA", 16),
       // Antes de esto no se acepta el «ya alcanza» del modelo (en la prueba real cortó en 40).
       minBusquedas: entero(env, "MIN_BUSQUEDAS", 60),
       // 0 = sin tope.
