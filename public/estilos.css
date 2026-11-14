@@ -333,6 +333,10 @@ textarea {
   text-align: center;
 }
 
+.saldos {
+  font-size: 0.875rem;
+}
+
 .vacio h1 {
   margin: 0 0 8px;
   font-size: 1.75rem;

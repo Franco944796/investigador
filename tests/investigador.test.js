@@ -248,7 +248,7 @@ test("con tope de búsquedas, las rondas se recortan y termina al agotarlas", as
   assert.match(eventos.find((e) => e.tipo === "aviso").datos.texto, /las 6 búsquedas previstas/);
 });
 
-test("con sitios y pedido académico, la mitad de las búsquedas va ahí hasta que se agotan", async () => {
+test("sitios y papers: cada uno con su cupo, y se dejan cuando ya no traen páginas nuevas", async () => {
   const web = [];
   const enSitios = [];
   const academicas = [];
@@ -290,18 +290,21 @@ test("con sitios y pedido académico, la mitad de las búsquedas va ahí hasta q
   await investigador.investigar(conversacion, flujoDe(eventos));
 
   assert.deepEqual(web, ["web 1", "web 2", "web r1", "web r2", "web r3"]);
-  assert.deepEqual(academicas, ["paper 1", "dirigida r1"]);
-  assert.deepEqual(enSitios, ["sitio 1"]);
+  // Sin destino indicado, las dirigidas se turnan entre papers y sitios.
+  assert.deepEqual(academicas, ["paper 1", "dirigida r1", "dirigida r3"]);
+  assert.deepEqual(enSitios, ["sitio 1", "dirigida r2"]);
   const avisos = eventos.filter((e) => e.tipo === "aviso").map((e) => e.datos.texto);
-  assert.match(avisos[0], /La mitad de las búsquedas va a: artículos académicos \(OpenAlex.*\), who\.int\./);
-  assert.match(avisos[1], /ya no traen resultados nuevos/);
-  assert.ok(revisiones[0].includes('"dirigidas"'), "mientras hay dirigidas, la revisión las pide");
-  assert.ok(!revisiones.at(-1).includes('"dirigidas"'), "agotadas, la revisión pide solo web");
+  assert.equal(avisos[0], "La mitad de las búsquedas web va a: who.int.");
+  assert.match(avisos[1], /^Además busco artículos académicos \(OpenAlex, en lugar de Google Scholar\): hasta/);
+  assert.ok(avisos.some((texto) => /sitios indicados ya no traen resultados nuevos/.test(texto)));
+  assert.ok(avisos.some((texto) => /Papers y libros ya no traen resultados nuevos/.test(texto)));
+  assert.ok(revisiones[0].includes('con destino "sitios"'));
+  assert.ok(!revisiones.at(-1).includes('con destino "sitios"'), "agotados los sitios, ya no se piden");
   const destinos = eventos.filter((e) => e.tipo === "consulta").map((e) => e.datos.destino ?? "web");
-  assert.deepEqual(destinos.slice(0, 4), ["web", "web", "academico", "sitios"]);
+  assert.deepEqual(destinos.slice(0, 4), ["web", "web", "sitios", "academico"]);
 });
 
-test("si el tema amerita libros, una cuarta parte de las búsquedas va a catálogos de libros", async () => {
+test("si el tema amerita libros, se buscan aparte de las búsquedas web", async () => {
   const libros = [];
   const web = [];
   const investigador = crearInvestigador({
@@ -312,7 +315,7 @@ test("si el tema amerita libros, una cuarta parte de las búsquedas va a catálo
           ? { completo: true }
           : { consultas: ["w1", "w2", "w3", "w4"], dirigidas: ["historia del peronismo"], libros: true },
     },
-    opciones: { ...OPCIONES, consultasIniciales: 4, maxBusquedas: 40 },
+    opciones: { ...OPCIONES, consultasIniciales: 4, maxBusquedas: 40, maxAcademicas: 50 },
     buscar: async (consulta) => {
       web.push(consulta);
       return { resultados: [{ titulo: consulta, url: `https://a.test/${consulta}`, contenido: LARGO }] };
@@ -328,8 +331,12 @@ test("si el tema amerita libros, una cuarta parte de las búsquedas va a catálo
   await investigador.investigar(crearConversacion("id", "ana", "Pregunta: el peronismo"), flujoDe(eventos));
 
   assert.deepEqual(libros, ["historia del peronismo"]);
-  assert.deepEqual(web, ["w1", "w2", "w3"]);
-  assert.ok(eventos.some((e) => e.tipo === "aviso" && e.datos.texto === "Una cuarta parte de las búsquedas va a: libros."));
+  assert.deepEqual(web, ["w1", "w2", "w3", "w4"], "los libros no le quitan lugar a la web");
+  assert.ok(
+    eventos.some(
+      (e) => e.tipo === "aviso" && e.datos.texto === "Además busco libros: hasta 50 búsquedas, aparte de las de la web.",
+    ),
+  );
   assert.ok(eventos.some((e) => e.tipo === "consulta" && e.datos.destino === "libros"));
 });
 
@@ -402,6 +409,12 @@ test("el año en curso se quita de la consulta y se pide lo reciente; otros año
       { texto: String(anio) },
     ],
   );
+  const reciente = `resultados electorales ${anio - 2}`;
+  assert.deepEqual(consultasDe([`cost breakdown ${anio - 2} ${anio - 1}`, reciente]), [
+    { texto: "cost breakdown", reciente: true },
+    { texto: "resultados electorales", reciente: true },
+  ]);
+  assert.deepEqual(consultasDe([reciente], new Set([anio - 2])), [{ texto: reciente }], "el pedido nombra ese año");
 });
 
 test("consultas casi iguales se reconocen aunque cambie el orden o el año", () => {
@@ -485,16 +498,8 @@ test("cada dirigida va a su destino; si un buscador falla se avisa, va a la web 
   assert.deepEqual(libros, ["historia de la energía"]);
   assert.deepEqual(
     web,
-    [
-      "costo general",
-      "panorama mundial",
-      "paper uno",
-      "precios regionales",
-      "perovskita estabilidad",
-      "fabricantes líderes",
-      "tándem eficiencia",
-    ],
-    "sin la casi repetida; las de papers van a la web cuando OpenAlex falla",
+    ["costo general", "panorama mundial", "paper uno", "precios regionales", "perovskita estabilidad", "fabricantes líderes"],
+    "sin la casi repetida; las de papers van a la web cuando OpenAlex falla, y después solo si hay cupo web",
   );
   const avisos = eventos.filter((e) => e.tipo === "aviso").map((e) => e.datos.texto);
   assert.equal(avisos.filter((texto) => /artículos académicos no respondió \(OpenAlex respondió 429\)/.test(texto)).length, 1);
@@ -525,7 +530,7 @@ test("la revisión ve qué rindió cada búsqueda y la cobertura de cada subpreg
     ],
     idiomas: [{ codigo: "es", nombre: "español" }],
   };
-  const texto = promptRevision(conversacion, 4).at(-1).content;
+  const texto = promptRevision(conversacion, { web: 4, sitios: 0, libres: 0 }).at(-1).content;
   assert.ok(texto.includes("- [web·es] costo solar → 6 útiles de 8 páginas nuevas"));
   assert.ok(texto.includes("- [academico·en] papers perovskita → sin páginas nuevas"));
   assert.ok(texto.includes("- [sitios] sitio caído → falló"));
@@ -534,4 +539,115 @@ test("la revisión ve qué rindió cada búsqueda y la cobertura de cada subpreg
   assert.ok(texto.includes("2. ¿Quién fabrica? — 0 fuentes"));
   assert.ok(texto.includes("Fuentes que no responden a ninguna subpregunta: 1"));
   assert.ok(texto.includes('"aspectos_nuevos"'));
+});
+
+test("si el filtro deja la ronda vacía se reintenta mostrando lo descartado; dos rondas así terminan", async () => {
+  const revisiones = [];
+  const buscadas = [];
+  const investigador = crearInvestigador({
+    llm: {
+      ...llmFijo,
+      completarJSON: async (mensajes) => {
+        const texto = mensajes.at(-1).content;
+        if (!texto.includes('"completo"')) return { consultas: ["costo de instalación", "ahorro anual"] };
+        revisiones.push(texto);
+        // Insiste con lo mismo; solo en el primer reintento propone algo distinto.
+        return revisiones.length === 2
+          ? { completo: false, consultas: ["subsidios vigentes"] }
+          : { completo: true, consultas: ["instalación costo", "anual ahorro"] };
+      },
+    },
+    opciones: { ...OPCIONES, consultasIniciales: 2, consultasPorRonda: 2, rondasExtra: 10, minBusquedas: 20, maxBusquedas: 40 },
+    buscar: async (consulta) => {
+      buscadas.push(consulta);
+      return { resultados: [{ titulo: consulta, url: `https://a.test/${encodeURIComponent(consulta)}`, contenido: LARGO }] };
+    },
+    leerPagina: async () => assert.fail("no hace falta leer"),
+  });
+  const eventos = [];
+  await investigador.investigar(crearConversacion("id", "ana", "Tema"), flujoDe(eventos));
+
+  assert.deepEqual(buscadas, ["costo de instalación", "ahorro anual", "subsidios vigentes"]);
+  assert.ok(!revisiones[0].includes("se descartaron"));
+  assert.match(revisiones[1], /se descartaron por ser casi iguales[^]*- instalación costo\n- anual ahorro/);
+  assert.equal(revisiones.length, 6, "ronda 1: dos pedidos; rondas 2 y 3: dos cada una, sin nada nuevo");
+  assert.match(eventos.filter((e) => e.tipo === "aviso").at(-1).datos.texto, /ya no propone búsquedas distintas/);
+});
+
+test("papers tienen su propio tope, limitado por el saldo de hoy, y siguen cuando se acaba la web", async () => {
+  const revisiones = [];
+  const papers = [];
+  const web = [];
+  const temas = ["grafeno conductividad", "litio densidad", "sodio costo", "azufre ciclos"];
+  const investigador = crearInvestigador({
+    llm: {
+      ...llmFijo,
+      completarJSON: async (mensajes) => {
+        const texto = mensajes.at(-1).content;
+        if (!texto.includes('"completo"')) {
+          return { consultas: ["baterías panorama", "mercado actual"], dirigidas: [{ texto: temas[0], destino: "academico" }] };
+        }
+        revisiones.push(texto);
+        return { completo: false, consultas: ["otra de la web"], dirigidas: [{ texto: temas[revisiones.length], destino: "academico" }] };
+      },
+    },
+    opciones: {
+      ...OPCIONES,
+      consultasIniciales: 2,
+      consultasPorRonda: 2,
+      rondasExtra: 10,
+      maxBusquedas: 2,
+      maxAcademicas: 50,
+      academicasIniciales: 1,
+      academicasPorRonda: 1,
+    },
+    saldoAcademico: async () => ({ busquedas: 3, renuevaEnSegundos: 7200 }),
+    buscar: async (consulta) => {
+      web.push(consulta);
+      return { resultados: [{ titulo: consulta, url: `https://a.test/${encodeURIComponent(consulta)}`, contenido: LARGO }] };
+    },
+    buscarAcademico: async (consulta) => {
+      papers.push(consulta);
+      return { resultados: [{ titulo: consulta, url: `https://doi.org/${encodeURIComponent(consulta)}`, contenido: LARGO }] };
+    },
+    leerPagina: async () => assert.fail("no hace falta leer"),
+  });
+  const eventos = [];
+  await investigador.investigar(crearConversacion("id", "ana", "Pregunta: baterías\nFuentes: papers"), flujoDe(eventos));
+
+  assert.deepEqual(web, ["baterías panorama", "mercado actual"], "la web no pasa de su tope");
+  assert.deepEqual(papers, temas.slice(0, 3), "papers sigue hasta agotar el saldo de hoy");
+  assert.ok(revisiones[0].includes("ya no quedan búsquedas web"));
+  const avisos = eventos.filter((e) => e.tipo === "aviso").map((e) => e.datos.texto);
+  assert.match(avisos[0], /hasta 3 búsquedas, aparte de las de la web \(hoy quedan 3 en OpenAlex\)/);
+  assert.equal(avisos.at(-1), "Se usaron las 2 búsquedas previstas y 3 de papers y libros: redacto con lo encontrado.");
+});
+
+test("sin saldo en OpenAlex se avisa y las consultas de papers se hacen en la web", async () => {
+  const web = [];
+  const investigador = crearInvestigador({
+    llm: {
+      ...llmFijo,
+      completarJSON: async (mensajes) =>
+        mensajes.at(-1).content.includes('"completo"')
+          ? { completo: true }
+          : { consultas: ["panorama general"], dirigidas: [{ texto: "estudio revisado", destino: "academico" }] },
+    },
+    opciones: { ...OPCIONES, consultasIniciales: 3, maxBusquedas: 40, maxAcademicas: 500 },
+    saldoAcademico: async () => ({ busquedas: 0, renuevaEnSegundos: 36000 }),
+    buscar: async (consulta) => {
+      web.push(consulta);
+      return { resultados: [{ titulo: consulta, url: `https://a.test/${encodeURIComponent(consulta)}`, contenido: LARGO }] };
+    },
+    buscarAcademico: async () => assert.fail("sin saldo no se consulta OpenAlex"),
+    leerPagina: async () => assert.fail("no hace falta leer"),
+  });
+  const eventos = [];
+  await investigador.investigar(crearConversacion("id", "ana", "Pregunta: algo\nFuentes: Google Scholar"), flujoDe(eventos));
+
+  assert.deepEqual(web, ["panorama general", "estudio revisado"]);
+  assert.equal(
+    eventos.find((e) => e.tipo === "aviso").datos.texto,
+    "Hoy no quedan búsquedas de papers ni de libros en OpenAlex (se renuevan en unas 10 h): esta investigación usa solo la web.",
+  );
 });

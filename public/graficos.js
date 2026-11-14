@@ -287,9 +287,11 @@ function mapa(spec, p, geografia) {
     const titulo = dato ? `${nombre}: ${formatear(dato.valor)} ${unidad}` : nombre;
     cuerpo += `<path d="${d}" fill="${relleno}" stroke="${p.fondo}" stroke-width="0.5"><title>${esc(titulo)}</title></path>`;
   }
+  // Un id por tema: en el informe conviven las dos versiones y cada una usa su degradé.
+  const escala = `escala-mapa-${p === PALETAS.oscuro ? "oscuro" : "claro"}`;
   const leyenda =
-    `<defs><linearGradient id="escala-mapa"><stop offset="0" stop-color="${claro}"/><stop offset="1" stop-color="${p.series[0]}"/></linearGradient></defs>` +
-    `<rect x="10" y="${alto + 12}" width="160" height="10" rx="2" fill="url(#escala-mapa)"/>` +
+    `<defs><linearGradient id="${escala}"><stop offset="0" stop-color="${claro}"/><stop offset="1" stop-color="${p.series[0]}"/></linearGradient></defs>` +
+    `<rect x="10" y="${alto + 12}" width="160" height="10" rx="2" fill="url(#${escala})"/>` +
     `<text x="10" y="${alto + 38}" font-size="11" fill="${p.suave}">${esc(formatear(minimo))}</text>` +
     `<text x="170" y="${alto + 38}" text-anchor="end" font-size="11" fill="${p.suave}">${esc(formatear(maximo))}</text>` +
     `<text x="180" y="${alto + 22}" font-size="11" fill="${p.suave}">${esc(unidad)}</text>`;

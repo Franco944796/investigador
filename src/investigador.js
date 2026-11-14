@@ -243,15 +243,6 @@ export function destinosDe(tema, sugeridos = []) {
 const activos = ({ academico, dominios, libros }) =>
   [academico && "academico", dominios.length && "sitios", libros && "libros"].filter(Boolean);
 
-const describirDestinos = ({ academico, dominios, libros }) =>
-  [
-    academico && "artículos académicos (OpenAlex, en lugar de Google Scholar)",
-    libros && "libros",
-    ...dominios,
-  ]
-    .filter(Boolean)
-    .join(", ");
-
 // Cada consulta dirigida va a donde el modelo la pensó (papers, libros o sitios). Solo si no lo
 // dijo, o eligió un destino que no está activo, se reparten por turno: repartir todas por turno
 // mandaba consultas de un sitio al buscador de papers, que no devolvía nada.
@@ -596,6 +587,7 @@ export function crearInvestigador({
         ),
         ...conDestino(consultasDe(propuesta.dirigidas, aniosDelPedido), conversacion),
       ];
+      const sinDirigidas = !consultasDe(propuesta.dirigidas).length;
       const previas = (conversacion.rendimiento ?? []).filter(Boolean);
       const tanda = { web: [], sitios: [], libres: [], descartadas: [] };
       const lugar = (consulta) => {
@@ -611,11 +603,13 @@ export function crearInvestigador({
           tanda.descartadas.push(consulta.texto);
           continue;
         }
-        // Lo que no entra en el cupo de la web prueba suerte en un buscador dirigido con lugar.
-        const dirigida = lugar(consulta) || consulta.destino ? null : conDestino([consulta], conversacion)[0];
-        (lugar(consulta) ?? (dirigida?.destino ? lugar(dirigida) : null))?.push(
-          lugar(consulta) ? consulta : dirigida,
-        );
+        if (lugar(consulta)) {
+          lugar(consulta).push(consulta);
+        } else if (sinDirigidas && !consulta.destino) {
+          // El modelo no separó las dirigidas: lo que sobra de la web va a un buscador dirigido.
+          const [dirigida] = conDestino([consulta], conversacion);
+          if (dirigida?.destino) lugar(dirigida)?.push(dirigida);
+        }
       }
       return tanda;
     };
@@ -653,6 +647,8 @@ export function crearInvestigador({
     const saldo = saldoAcademico ? await saldoAcademico().catch(() => null) : null;
     if (saldo) maxLibres = Math.min(maxLibres, saldo.busquedas);
     let inicial = { web: [], sitios: [], libres: [], descartadas: [] };
+    // Lo que se pidió buscar en OpenAlex, aunque hoy no haya saldo (para avisarlo).
+    let pedidos = {};
     const iniciales = [
       opciones.consultasIniciales,
       opciones.academicasIniciales ?? opciones.consultasIniciales,
@@ -669,6 +665,9 @@ export function crearInvestigador({
       conversacion.destinos = destinosDe(conversacion.tema, plan.sitios);
       if (plan.academico === true) conversacion.destinos.academico = true;
       if (plan.libros === true) conversacion.destinos.libros = true;
+      pedidos = { academico: conversacion.destinos.academico, libros: conversacion.destinos.libros };
+      // Sin saldo, las consultas pensadas para papers o libros se hacen en la web.
+      if (maxLibres <= 0) Object.assign(conversacion.destinos, { academico: false, libros: false });
       // Las subpreguntas ordenan la investigación: cada fuente dice cuáles responde y cada ronda
       // busca lo que falta de las menos cubiertas.
       conversacion.aspectos = textos(plan.aspectos).slice(0, 12);
@@ -688,10 +687,10 @@ export function crearInvestigador({
     if (destinos.dominios.length) {
       emitir("aviso", { texto: `La mitad de las búsquedas web va a: ${destinos.dominios.join(", ")}.` });
     }
-    if (destinos.academico || destinos.libros) {
+    if (pedidos.academico || pedidos.libros) {
       const donde = [
-        destinos.academico && "artículos académicos (OpenAlex, en lugar de Google Scholar)",
-        destinos.libros && "libros",
+        pedidos.academico && "artículos académicos (OpenAlex, en lugar de Google Scholar)",
+        pedidos.libros && "libros",
       ]
         .filter(Boolean)
         .join(" y ");
@@ -700,7 +699,7 @@ export function crearInvestigador({
         texto:
           maxLibres > 0
             ? `Además busco ${donde}: hasta ${Number.isFinite(maxLibres) ? `${maxLibres} búsquedas` : "las búsquedas que hagan falta"}, aparte de las de la web${saldo ? ` (hoy quedan ${saldo.busquedas} en OpenAlex)` : ""}.`
-            : `Hoy no quedan búsquedas de ${donde} en OpenAlex${horas ? ` (se renuevan en unas ${horas} h)` : ""}: esta investigación usa solo la web.`,
+            : `Hoy no quedan búsquedas de papers ni de libros en OpenAlex${horas ? ` (se renuevan en unas ${horas} h)` : ""}: esta investigación usa solo la web.`,
       });
     }
     await buscarTanda(inicial);

@@ -236,3 +236,19 @@ test("detrás de Cloudflare, el bloqueo por intentos usa CF-Connecting-IP y no e
   assert.equal((await entrar("codigo-de-ana", "203.0.113.7", 99)).status, 429);
   assert.equal((await entrar("codigo-de-ana", "198.51.100.4", 1)).status, 200, "otra IP no queda bloqueada");
 });
+
+test("el estado informa los saldos de búsqueda solo con sesión", async () => {
+  const estado = { web: { usadas: 206, limite: 1000 }, papers: { busquedas: 987, renuevaEnSegundos: 3600 } };
+  const { servidor, base: direccion } = await levantar({
+    acceso: crearAcceso("ana:codigo-de-ana:0"),
+    almacen: crearAlmacenMemoria(),
+    urlLLM: llmSimulado.urlBase,
+    entorno: ENTORNO,
+    saldos: async () => estado,
+  });
+  cerrar.push(servidor);
+  const ana = cliente(direccion);
+  assert.equal((await ana.pedir("/api/estado")).status, 401);
+  await ana.entrar("codigo-de-ana");
+  assert.deepEqual(await (await ana.pedir("/api/estado")).json(), estado);
+});

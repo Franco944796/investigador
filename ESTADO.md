@@ -105,15 +105,20 @@ que la PC de Franco esté prendida, sin costo, con historial guardado por person
   min con 43 búsquedas por un error: el filtro de consultas casi iguales dejó una ronda en cero y
   el bucle cortó antes del mínimo de 60. Además se fue de tema (calificación de satélites),
   libros rindió 0 de 12 y el modelo pegó «2024» a las consultas. Leyó 244 páginas en 17 min.
-- Decisiones de Franco (2026-11-14), en curso sin push:
-  1. No cortar antes del mínimo: reintentar la revisión mostrando las consultas descartadas;
-     terminar solo tras dos rondas seguidas sin consultas nuevas.
-  2. Las rondas no se alejan del pedido original (consultas y subpreguntas nuevas).
-  3. Quitar de las consultas los años recientes que el pedido no nombra.
-  4. OpenAlex con presupuesto propio: hasta 500 búsquedas de papers/libros por investigación,
-     aparte de las 100 de Tavily (web y sitios); aviso de cuántas quedan hoy o de que no quedan.
-  5. «Ver informe» con modo oscuro: botón, arranca según el sistema y recuerda; el HTML
-     descargado sale en el tema que se esté viendo; al imprimir, siempre claro.
+- Hecho el 2026-11-14 (sin push; 66 pruebas pasan). OJO: Franco subió `2b19087 cambios_sin
+  probar` con esto a medio hacer; hasta el próximo push Render corre una versión incompleta.
+  1. Rondas: si el filtro de repetidas deja la ronda vacía, se reintenta mostrando las
+     descartadas; termina tras dos rondas seguidas sin consultas nuevas (aviso), por presupuesto,
+     por «completo» pasado el mínimo de 60, o por 20 irrelevantes.
+  2. La revisión pide no alejarse del pedido (escala, contexto, exclusiones).
+  3. Se quitan de las consultas los años de los últimos 3 que el pedido no nombra (→ `reciente`).
+  4. Dos presupuestos: web y sitios (Tavily, máx. 100; la mitad a sitios si hay) y papers y
+     libros (OpenAlex, `MAX_ACADEMICAS` 500, 20 iniciales y 16 por ronda), limitado por el saldo
+     del día (`saldoDeOpenAlex`); avisos de saldo o de que no queda. Cuando se acaba la web, las
+     rondas siguen solo con papers. `GET /api/estado` + línea «Disponible: … búsquedas web este
+     mes · … de papers hoy» en el inicio (`saldoDeTavily`, caché de 1 min en `servidor.js`).
+  5. «Ver informe» con modo oscuro: `public/tema.js` (antes del estilo), botón que recuerda,
+     gráficos dibujados en los dos temas, HTML descargado en el tema visible, impresión clara.
   Para leer más de 3 a la vez: variable `TAREAS_EN_PARALELO` en Render (sin tocar código).
 
 - Exhaustiva de prueba (id 33d45e5e…, energía solar) terminada: 8 h 12 min, 100 búsquedas (web
@@ -231,15 +236,14 @@ que la PC de Franco esté prendida, sin costo, con historial guardado por person
 
 ## Pendiente
 
-1. Exhaustiva real en Render sobre propulsión con aire comprimido (pedido de Franco,
-   2026-11-14): el pedido ya está redactado y mostrado; lanzarla SOLO cuando Franco dé la orden.
-   Al terminar, revisar: subpreguntas en el árbol, destinos, avisos de fallo, fecha y tipo en
-   las fuentes, gráficos depurados y las horas de cada etapa (la anterior tardó 8 h 12 min).
-2. Prueba del bloqueo por intentos en Render (8 códigos malos; Franco pidió hacerla al final).
-3. Despertar de Render tras 15 min sin uso desde la página de Pages.
-
-Hecho el 2026-11-14: push a879307 publicado en Render y Pages (todo lo de la revisión);
-`OPENALEX_CLAVE` cargada en Render y en `.env` (probada: 1 USD por día, búsqueda con resultados).
+1. Franco: push (reemplaza la versión incompleta que quedó en Render). No lanzar
+   investigaciones antes.
+2. Exhaustiva real en Render sobre propulsión con aire comprimido, cuando Franco dé la orden
+   (el pedido está en la conversación; conviene precisar la escala en Contexto para que no se
+   vaya a satélites). Revisar: mínimo de 60 búsquedas web, papers aparte con aviso de saldo,
+   que no se aleje del pedido, horas de cada etapa, gráficos depurados.
+3. Prueba del bloqueo por intentos en Render (8 códigos malos; Franco pidió hacerla al final).
+4. Despertar de Render tras 15 min sin uso desde la página de Pages.
 
 ## Archivos clave y comandos
 

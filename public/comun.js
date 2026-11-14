@@ -153,12 +153,19 @@ function pie(titulo, citas, detalle = []) {
   return leyenda;
 }
 
+// Con tema "ambos" el gráfico se dibuja en claro y en oscuro, y el estilo muestra uno: así el
+// informe cambia de tema sin redibujar y el archivo descargado (sin scripts) también puede.
 function figuraDeGrafico(codigo, tema, geo) {
-  const grafico = dibujarGrafico(codigo, { tema, geografia: geo });
+  const temas = tema === "ambos" ? ["claro", "oscuro"] : [tema];
+  const dibujos = temas.map((uno) => dibujarGrafico(codigo, { tema: uno, geografia: geo }));
+  const [grafico] = dibujos;
   if (!grafico) return null;
   const figura = Object.assign(document.createElement("figure"), { className: "grafico" });
   // El SVG lo arma graficos.js escapando todo el texto que viene del modelo.
-  figura.innerHTML = grafico.svg;
+  figura.innerHTML =
+    tema === "ambos"
+      ? dibujos.map((dibujo, i) => `<div class="tema-${temas[i]}">${dibujo.svg}</div>`).join("")
+      : grafico.svg;
   figura.append(pie(grafico.titulo, grafico.citas, grafico.detalle));
   return figura;
 }

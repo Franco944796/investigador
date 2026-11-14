@@ -149,7 +149,7 @@ function desdeRegistro(registro) {
   return enMemoria(conversacion, { ...campos, ...datos, vistas: new Set(datos.vistas) });
 }
 
-export function crearApp({ config, acceso, investigador, almacen, generarPDF }) {
+export function crearApp({ config, acceso, investigador, almacen, generarPDF, saldos }) {
   const opciones = config.investigacion;
   const activas = new Map();
   const cargando = new Map();
@@ -452,6 +452,11 @@ export function crearApp({ config, acceso, investigador, almacen, generarPDF }) 
         "Content-Disposition": `attachment; filename="${nombreDeArchivo(conversacion.tema)}"`,
       })
       .send(pdf);
+  });
+
+  // Cuántas búsquedas quedan (web en el mes, papers en el día), para saberlo antes de investigar.
+  app.get("/api/estado", exigirSesion, async (req, res) => {
+    res.json(saldos ? await saldos() : {});
   });
 
   app.get("/api/conversaciones/:id/informe", exigirSesion, async (req, res) => {

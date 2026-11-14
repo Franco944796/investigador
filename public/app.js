@@ -489,6 +489,30 @@ function abrirConversacion(id) {
   actualizarRedactor();
 }
 
+// Búsquedas que quedan: web en el mes del plan y papers en el día.
+async function mostrarSaldos() {
+  const lugar = $("#saldos");
+  let estadoActual;
+  try {
+    estadoActual = await pedir("/api/estado");
+  } catch {
+    return;
+  }
+  const { web, papers } = estadoActual;
+  const partes = [];
+  if (web) partes.push(`${Math.max(0, web.limite - web.usadas)} búsquedas web este mes`);
+  if (papers) {
+    const horas = papers.renuevaEnSegundos ? Math.max(1, Math.round(papers.renuevaEnSegundos / 3600)) : null;
+    partes.push(
+      papers.busquedas
+        ? `${papers.busquedas} de papers hoy`
+        : `sin búsquedas de papers hoy${horas ? ` (se renuevan en unas ${horas} h)` : ""}`,
+    );
+  }
+  lugar.textContent = partes.length ? `Disponible: ${partes.join(" · ")}.` : "";
+  lugar.hidden = !partes.length;
+}
+
 function irAlInicio() {
   estado.flujo?.abort();
   estado.flujo = null;
@@ -499,6 +523,7 @@ function irAlInicio() {
   marcarActiva();
   actualizarRedactor();
   cargarHistorial();
+  mostrarSaldos();
   texto.focus();
 }
 

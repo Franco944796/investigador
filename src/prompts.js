@@ -58,12 +58,18 @@ const DIRIGIDAS =
 const COMO_NATIVO =
   "Escribe cada consulta como la buscaría un hablante nativo de ese idioma, con la terminología técnica, los nombres propios y las siglas que se usan en él; no traduzcas palabra por palabra. En chino usa caracteres simplificados, salvo que el tema sea de Taiwán o Hong Kong.";
 
-export function promptPlan(tema, cantidad, { multilingue = false } = {}) {
+// `libres`: cuántas consultas de papers y libros se pueden pedir aparte de las de la web (0 si hoy
+// no hay saldo en OpenAlex).
+export function promptPlan(tema, cantidad, { multilingue = false, libres = 0 } = {}) {
+  const aparte = libres
+    ? ` Las de papers y libros no gastan el cupo de la búsqueda web: van aparte de las ${cantidad} consultas, hasta ${libres}, y conviene aprovecharlas con consultas bien distintas entre sí (cada subpregunta desde varios ángulos, con sus términos técnicos y sinónimos). Las de sitios sí cuentan dentro de las ${cantidad}.`
+    : ' Hoy no hay búsquedas de papers ni de libros disponibles: no propongas dirigidas con destino "academico" ni "libros".';
   const idiomas = multilingue
     ? `Investigación multilingüe: además del idioma del pedido, busca en inglés y en chino, y en hasta 2 idiomas más solo si tienen fuentes especialmente valiosas para este tema (por ejemplo, el idioma del país o la región de la que trata, o donde más se investiga sobre él). Si el pedido limita idiomas, países o fuentes, respétalo y usa solo los idiomas compatibles con eso.
 Reparte las consultas entre los idiomas elegidos, con más en el idioma del pedido y en inglés. ${COMO_NATIVO}
 
 Sitios, fuentes académicas y libros: si el pedido nombra sitios concretos (por dominio o por nombre, por ejemplo «la OMS» → who.int), pide fuentes académicas o científicas (Google Scholar, papers, revistas) o el tema tiene buena bibliografía en libros (historia, derecho, filosofía, ciencias, biografías, teoría; no para novedades de este mes), pon parte de las consultas en "dirigidas": se buscarán solo dentro de esos sitios, en un buscador de artículos académicos o en catálogos de libros. ${DIRIGIDAS}
+${aparte}
 En "sitios" van los dominios de los sitios que el pedido nombra, sin agregar otros; "academico" es true si pide fuentes académicas; "libros" es true si conviene buscar libros. Si nada de esto aplica, "dirigidas" y "sitios" van vacíos.
 
 Subpreguntas: en "aspectos", entre 6 y 12 subpreguntas concretas que el informe tiene que responder para cubrir el pedido completo (si el pedido lista aspectos, parte de ellos y agrega los que falten: contexto, datos, actores, problemas, perspectivas). Van en el idioma del pedido y las consultas tienen que cubrirlas todas.
@@ -172,7 +178,19 @@ function cobertura(conversacion) {
   return `${lineas.join("\n")}\nFuentes que no responden a ninguna subpregunta: ${sueltas}`;
 }
 
-export function promptRevision(conversacion, cantidad, dirigidas = 0, { exigir = false } = {}) {
+// `cupos`: cuántas consultas nuevas entran en la web, en los sitios pedidos y en papers y libros.
+// `descartadas`: las que el modelo propuso recién y se rechazaron por repetidas.
+export function promptRevision(conversacion, cupos, { exigir = false, descartadas = [] } = {}) {
+  const cantidad = cupos.web;
+  const pedir = cantidad
+    ? `hasta ${cantidad} consultas nuevas para la web`
+    : "solo consultas dirigidas (ya no quedan búsquedas web)";
+  const rechazadas = descartadas.length
+    ? `
+Estas propuestas tuyas se descartaron por ser casi iguales a búsquedas ya hechas; no las repitas ni las reformules, apunta a otras subpreguntas o a otros ángulos:
+${descartadas.map((texto) => `- ${texto}`).join("\n")}
+`
+    : "";
   const total = conversacion.fuentes.length || 1;
   const recorte = Math.max(120, Math.min(MAX_NOTAS_EN_REVISION, Math.floor(MAX_REVISION / total) - 80));
   const conAspectos = conversacion.aspectos?.length > 0;
@@ -205,12 +223,13 @@ ${reunido}
 
 ${
         exigir
-          ? `Todavía no alcanza para un informe exhaustivo: propone hasta ${cantidad} consultas nuevas para profundizar en lo menos cubierto, conseguir datos más recientes o más precisos, aclarar lo que las fuentes se contradicen y sumar fuentes en otros idiomas. Responde con "completo": false.`
-          : `Indica si con esto alcanza para un informe exhaustivo. Si faltan aspectos importantes, propone hasta ${cantidad} consultas nuevas que los cubran.`
+          ? `Todavía no alcanza para un informe exhaustivo: propone ${pedir} para profundizar en lo menos cubierto, conseguir datos más recientes o más precisos, aclarar lo que las fuentes se contradicen y sumar fuentes en otros idiomas. Responde con "completo": false.`
+          : `Indica si con esto alcanza para un informe exhaustivo. Si faltan aspectos importantes, propone ${pedir} que los cubran.`
       } ${criterio}
+Las consultas y las subpreguntas nuevas tienen que servir para responder el pedido tal como está planteado, con su escala, su contexto y lo que excluye: no abras temas vecinos que el pedido no pide.
 Las consultas nuevas tienen que ser distintas de las ya hechas: una parecida a otra trae las mismas páginas. Las que no trajeron nada útil necesitan otro enfoque u otras palabras, no la misma idea.
-${CORTA} ${RECIENTE}
-${dirigidas ? destinoDeRevision(conversacion.destinos, dirigidas) : ""}
+${rechazadas}${CORTA} ${RECIENTE}
+${destinoDeRevision(conversacion.destinos ?? {}, cupos)}
 ${formato}`,
     },
   ];
@@ -246,15 +265,21 @@ Escribe un informe exhaustivo en Markdown:
   ];
 }
 
-function destinoDeRevision({ academico, dominios, libros }, cantidad) {
-  const donde = [
-    academico && "un buscador de artículos académicos",
-    libros && "catálogos de libros",
-    dominios.length && `los sitios ${dominios.join(", ")}`,
-  ]
-    .filter(Boolean)
-    .join(" y ");
-  return `Además, propone hasta ${cantidad} consultas "dirigidas", que se buscarán solo en ${donde}. ${DIRIGIDAS} Van en el mismo objeto JSON: "dirigidas": [{"idioma": "en", "texto": "...", "destino": "${academico ? "academico" : libros ? "libros" : "sitios"}"}].
+function destinoDeRevision({ academico, dominios = [], libros }, cupos) {
+  const partes = [];
+  if (cupos.sitios) {
+    partes.push(`hasta ${cupos.sitios} con destino "sitios", que se buscarán solo en ${dominios.join(", ")}`);
+  }
+  if (cupos.libres) {
+    const donde = [academico && '"academico" (buscador de papers)', libros && '"libros"']
+      .filter(Boolean)
+      .join(" o ");
+    partes.push(
+      `hasta ${cupos.libres} con destino ${donde}, que no gastan búsquedas web: aprovéchalas con consultas bien distintas entre sí`,
+    );
+  }
+  if (!partes.length) return "";
+  return `Además, propone consultas "dirigidas": ${partes.join("; y ")}. ${DIRIGIDAS} Van en el mismo objeto JSON: "dirigidas": [{"idioma": "en", "texto": "...", "destino": "${cupos.libres ? (academico ? "academico" : "libros") : "sitios"}"}].
 `;
 }
 

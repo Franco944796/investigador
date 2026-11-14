@@ -1,4 +1,12 @@
-import { $, descargar, guardarArchivo, hayToken, pedir, pintarMarkdown } from "./comun.js";
+import {
+  $,
+  descargar,
+  guardarArchivo,
+  guardarDato,
+  hayToken,
+  pedir,
+  pintarMarkdown,
+} from "./comun.js";
 
 const id = new URLSearchParams(location.search).get("id");
 const documento = $("#documento");
@@ -91,7 +99,7 @@ function seguimiento(intercambios) {
   );
   for (const { pregunta, respuesta } of intercambios) {
     const cuerpo = elemento("div", { className: "respuesta" });
-    pintarMarkdown(cuerpo, respuesta, crearCita, { tema: "claro" });
+    pintarMarkdown(cuerpo, respuesta, crearCita, { tema: "ambos" });
     seccion.append(
       elemento(
         "div",
@@ -267,7 +275,7 @@ function armar(datos) {
   if (encabezado) markdown = markdown.replace(encabezado[0], "");
 
   const cuerpo = elemento("section", { className: "cuerpo" });
-  pintarMarkdown(cuerpo, markdown, crearCita, { tema: "claro" });
+  pintarMarkdown(cuerpo, markdown, crearCita, { tema: "ambos" });
   const preguntas = seguimiento(datos.intercambios);
   const citadas = new Set(
     [markdown, ...datos.intercambios.map((intercambio) => intercambio.respuesta)]
@@ -307,7 +315,7 @@ async function descargarHTML(boton) {
     }
     for (const nodo of hoja.querySelectorAll("[aria-current]")) nodo.removeAttribute("aria-current");
     const html = `<!doctype html>
-<html lang="es">
+<html lang="es" data-tema="${document.documentElement.dataset.tema}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -330,6 +338,18 @@ ${hoja.outerHTML}
 }
 
 $("#descargar-html").addEventListener("click", (evento) => descargarHTML(evento.currentTarget));
+// El tema inicial lo pone tema.js antes de pintar; acá se cambia y se recuerda.
+const raiz = document.documentElement;
+const rotularTema = () => {
+  $("#tema").textContent = raiz.dataset.tema === "oscuro" ? "Modo claro" : "Modo oscuro";
+};
+$("#tema").addEventListener("click", () => {
+  raiz.dataset.tema = raiz.dataset.tema === "oscuro" ? "claro" : "oscuro";
+  guardarDato("tema-informe", raiz.dataset.tema);
+  rotularTema();
+});
+rotularTema();
+
 $("#descargar-pdf").addEventListener("click", async (evento) => {
   const boton = evento.currentTarget;
   boton.disabled = true;

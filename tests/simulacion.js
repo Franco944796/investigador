@@ -25,7 +25,19 @@ const investigador = crearInvestigador({
 });
 const almacen = crearAlmacenMemoria();
 
-crearApp({ config, acceso: crearAcceso("prueba:codigo-de-prueba:5"), investigador, almacen, generarPDF })
+const saldos = async () => ({
+  web: { usadas: 206, limite: 1000 },
+  papers: { busquedas: 987, renuevaEnSegundos: 18000 },
+});
+
+crearApp({
+  config,
+  acceso: crearAcceso("prueba:codigo-de-prueba:5"),
+  investigador,
+  almacen,
+  generarPDF,
+  saldos,
+})
   .listen(config.puerto, "127.0.0.1", () => {
     console.log(`Simulación en http://127.0.0.1:${config.puerto} (código: codigo-de-prueba)`);
   });

@@ -6,9 +6,35 @@
   --borde: #dfe3e8;
   --acento: #0b5cad;
   --acento-fondo: #e7f0fa;
+  --barra: rgb(255 255 255 / 0.94);
+  --error: #b42318;
   --ancho: 720px;
   --indice: 250px;
   color-scheme: light;
+}
+
+:root[data-tema="oscuro"] {
+  --fondo: #0e1014;
+  --fondo-suave: #161920;
+  --texto: #e7e9ee;
+  --texto-suave: #9aa2b1;
+  --borde: #2a2f3a;
+  --acento: #7cc4ff;
+  --acento-fondo: #17354d;
+  --barra: rgb(14 16 20 / 0.94);
+  --error: #ff8f8f;
+  color-scheme: dark;
+}
+
+/* Cada gráfico viene dibujado en los dos temas (el archivo descargado no tiene scripts para
+   redibujarlo): se muestra el que corresponde. */
+.tema-oscuro,
+:root[data-tema="oscuro"] .tema-claro {
+  display: none;
+}
+
+:root[data-tema="oscuro"] .tema-oscuro {
+  display: block;
 }
 
 * {
@@ -79,7 +105,7 @@ a {
   gap: 8px;
   padding: 10px 16px;
   border-bottom: 1px solid var(--borde);
-  background: rgb(255 255 255 / 0.94);
+  background: var(--barra);
   backdrop-filter: blur(6px);
 }
 
@@ -119,7 +145,7 @@ a {
   max-width: var(--ancho);
   margin: 12px auto 0;
   padding: 0 16px;
-  color: #b42318;
+  color: var(--error);
   font: 0.9rem system-ui, sans-serif;
 }
 
@@ -337,7 +363,7 @@ a.cita {
 a.cita:hover,
 a.cita:focus-visible {
   background: var(--acento);
-  color: #fff;
+  color: var(--fondo);
 }
 
 .vista-cita {
@@ -493,6 +519,26 @@ a.cita:focus-visible {
 }
 
 @media print {
+  /* En papel, siempre claro. */
+  :root[data-tema="oscuro"] {
+    --fondo: #ffffff;
+    --fondo-suave: #f5f6f8;
+    --texto: #1d2127;
+    --texto-suave: #5b6472;
+    --borde: #dfe3e8;
+    --acento: #0b5cad;
+    --acento-fondo: #e7f0fa;
+    color-scheme: light;
+  }
+
+  :root[data-tema="oscuro"] .tema-claro {
+    display: block;
+  }
+
+  :root[data-tema="oscuro"] .tema-oscuro {
+    display: none;
+  }
+
   .herramientas,
   .indice,
   .vista-cita,

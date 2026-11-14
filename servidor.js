@@ -76,7 +76,19 @@ const investigador = crearInvestigador({
   opciones: config.investigacion,
 });
 
-const app = crearApp({ config, acceso, investigador, almacen, generarPDF });
+// Los saldos se consultan a los proveedores como mucho una vez por minuto.
+let saldosGuardados = { hasta: 0, datos: {} };
+async function saldos() {
+  if (saldosGuardados.hasta > Date.now()) return saldosGuardados.datos;
+  const [web, papers] = await Promise.all([
+    saldoDeTavily(config.tavilyClave).catch(() => null),
+    saldoDeOpenAlex(config.openalexClave).catch(() => null),
+  ]);
+  saldosGuardados = { hasta: Date.now() + 60000, datos: { web, papers } };
+  return saldosGuardados.datos;
+}
+
+const app = crearApp({ config, acceso, investigador, almacen, generarPDF, saldos });
 
 // Render duerme el servicio tras 15 minutos sin pedidos entrantes, aunque haya una
 // investigación corriendo: mientras la haya, el servidor se pide a sí mismo por la URL pública.
