@@ -1,3 +1,9 @@
 node_modules/
 .env
 datos/
+
+# Archivos de trabajo con IA: quedan solo en la PC, no se suben
+ESTADO.md
+CLAUDE.md
+AGENTS.md
+.claude/
