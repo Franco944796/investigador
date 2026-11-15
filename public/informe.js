@@ -134,6 +134,33 @@ function listaDeFuentes(citadas) {
   return elemento("section", {}, elemento("h2", { textContent: "Fuentes" }), lista);
 }
 
+// Páginas que aparecieron en las búsquedas pero no se pudieron leer.
+function listaDePendientes(pendientes) {
+  const unicas = [...new Map(pendientes.map((pendiente) => [pendiente.url, pendiente])).values()];
+  const lista = elemento("ul", { className: "lista-fuentes pendientes" });
+  for (const { url, titulo, motivo } of unicas) {
+    lista.append(
+      elemento(
+        "li",
+        {},
+        elemento("a", { href: url, textContent: titulo || url, target: "_blank", rel: "noopener noreferrer" }),
+        " ",
+        elemento("span", { className: "sitio", textContent: `${sitioDe(url)} · ${motivo}` }),
+      ),
+    );
+  }
+  return elemento(
+    "section",
+    {},
+    elemento("h2", { textContent: "Fuentes para revisar a mano" }),
+    elemento("p", {
+      textContent:
+        "Estas páginas aparecieron en las búsquedas pero no se pudieron leer, así que el informe no las usa. Puede valer la pena abrirlas.",
+    }),
+    lista,
+  );
+}
+
 function armarIndice() {
   const usados = new Set();
   const lista = indice.querySelector("ol");
@@ -288,6 +315,7 @@ function armar(datos) {
     cuerpo,
     ...(preguntas ? [preguntas] : []),
     listaDeFuentes(citadas),
+    ...(datos.pendientes?.length ? [listaDePendientes(datos.pendientes)] : []),
   );
   document.title = `${titulo} · Investigador`;
   armarIndice();

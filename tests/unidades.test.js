@@ -168,8 +168,9 @@ bloque de código
   assert.equal(nombreDeArchivo("¿¡!?"), "informe.pdf");
 });
 
-test("PDF: los símbolos que la fuente no tiene se reemplazan o se quitan", () => {
-  assert.equal(aptoParaPDF("5 kWp → 18 kWh ≈ 540 ✅ ⚠ listo 🔥"), "5 kWp -> 18 kWh ≈ 540 √ (!) listo ");
+test("PDF: los símbolos que ninguna fuente tiene se reemplazan o se quitan", () => {
+  assert.equal(aptoParaPDF("5 kWp → 18 kWh ≈ 540 ✅ ⚠ listo 🔥"), "5 kWp → 18 kWh ≈ 540 ✓ ⚠ listo ");
+  assert.equal(aptoParaPDF("ṁ ∝ ∇p ⋅ A"), "ṁ ∝ ∇p ⋅ A", "los símbolos que tiene DejaVu se conservan");
   assert.equal(aptoParaPDF("Ñandú ¿qué? «sí» – 20 °C · x² ≤ 3"), "Ñandú ¿qué? «sí» – 20 °C · x² ≤ 3");
   const markdown = "# Informe\r\n\n## Resumen\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n\tcódigo";
   assert.equal(aptoParaPDF(markdown), markdown, "los saltos de línea y tabulaciones se conservan");

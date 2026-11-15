@@ -1,6 +1,7 @@
+import { MARCA, PARTIR, latexATexto, separarFormulas } from "./formulas.js";
 import { dibujarGrafico, imagenDe, tipoDeGrafico } from "./graficos.js";
 
-const { marked, DOMPurify } = globalThis;
+const { marked, DOMPurify, katex } = globalThis;
 
 export const $ = (selector) => document.querySelector(selector);
 
@@ -122,7 +123,7 @@ function enlazarCitas(contenedor, crearCita) {
   const nodos = [];
   while (recorrido.nextNode()) {
     const nodo = recorrido.currentNode;
-    if (/\[\d+\]/.test(nodo.data) && !nodo.parentElement.closest("a, code, pre")) nodos.push(nodo);
+    if (/\[\d+\]/.test(nodo.data) && !nodo.parentElement.closest("a, code, pre, math")) nodos.push(nodo);
   }
   for (const nodo of nodos) {
     const fragmento = document.createDocumentFragment();
@@ -226,10 +227,48 @@ function pintarGraficos(contenedor, tema, crearCita) {
   }
 }
 
+// MathML y no HTML de KaTeX: el navegador lo dibuja sin la hoja de estilos ni las fuentes de KaTeX,
+// así que también se ve en el HTML descargado.
+function elementoDeFormula({ tex, display }) {
+  const elemento = Object.assign(document.createElement("span"), {
+    className: display ? "formula destacada" : "formula",
+  });
+  if (katex) {
+    const mathml = katex.renderToString(tex, { displayMode: display, output: "mathml", throwOnError: false });
+    // DOMPurify quita <semantics> pero deja su contenido: la anotación con el LaTeX quedaría a la
+    // vista junto a la fórmula.
+    elemento.innerHTML = DOMPurify.sanitize(mathml.replace(/<annotation[\s\S]*?<\/annotation>/g, ""));
+  } else {
+    elemento.textContent = latexATexto(tex)
+      .map((tramo) => (tramo.sub ? `_${tramo.text}` : tramo.sup ? `^${tramo.text}` : tramo.text))
+      .join("");
+  }
+  return elemento;
+}
+
+function pintarFormulas(contenedor, formulas) {
+  if (!formulas.length) return;
+  const recorrido = document.createTreeWalker(contenedor, NodeFilter.SHOW_TEXT);
+  const nodos = [];
+  while (recorrido.nextNode()) {
+    if (MARCA.test(recorrido.currentNode.data)) nodos.push(recorrido.currentNode);
+  }
+  for (const nodo of nodos) {
+    const fragmento = document.createDocumentFragment();
+    nodo.data.split(PARTIR).forEach((parte, indice) => {
+      const formula = indice % 2 ? formulas[Number(parte)] : null;
+      fragmento.append(formula ? elementoDeFormula(formula) : parte);
+    });
+    nodo.replaceWith(fragmento);
+  }
+}
+
 export function pintarMarkdown(contenedor, markdown, crearCita, { tema = "oscuro" } = {}) {
-  contenedor.innerHTML = DOMPurify.sanitize(marked.parse(markdown), {
+  const { texto, formulas } = separarFormulas(markdown);
+  contenedor.innerHTML = DOMPurify.sanitize(marked.parse(texto), {
     FORBID_TAGS: ["img", "style", "form", "input", "button"],
   });
+  pintarFormulas(contenedor, formulas);
   pintarGraficos(contenedor, tema, crearCita);
   for (const tabla of contenedor.querySelectorAll("table")) {
     const envoltura = document.createElement("div");

@@ -150,7 +150,12 @@ function agregarPregunta(contenido) {
 }
 
 const ETIQUETAS = { academico: "Papers", libros: "Libros", sitios: "En sitio" };
-const ESTADOS_DE_FUENTE = { leyendo: "Leyendo", lista: "Leída", descartada: "Omitida" };
+const ESTADOS_DE_FUENTE = {
+  leyendo: "Leyendo",
+  lista: "Leída",
+  descartada: "Omitida",
+  "sin-acceso": "Sin acceso",
+};
 
 const elemento = (etiqueta, propiedades = {}, ...hijos) => {
   const nodo = Object.assign(document.createElement(etiqueta), propiedades);
@@ -263,7 +268,9 @@ function agregarRespuesta(pregunta = "") {
 
   // Las investigaciones guardadas antes de numerar las búsquedas no dicen de cuál salió cada
   // fuente: van juntas en una rama aparte para no atribuirlas mal.
-  function pintarFuente({ id, url, titulo, estado: situacion, n, motivo, consulta, tipo, fecha }) {
+  function pintarFuente({ id, url, titulo, estado: leida, n, motivo, consulta, tipo, fecha, revisar }) {
+    // Las que no se pudieron leer se distinguen de las omitidas por no tratar el tema.
+    const situacion = leida === "descartada" && revisar ? "sin-acceso" : leida;
     let hoja = filas.get(id);
     if (!hoja) {
       const destino =
@@ -300,7 +307,7 @@ function agregarRespuesta(pregunta = "") {
       leidas++;
       contar();
     }
-    const detalle = situacion === "descartada" ? motivo : [tipo, fecha].filter(Boolean).join(" · ");
+    const detalle = leida === "descartada" ? motivo : [tipo, fecha].filter(Boolean).join(" · ");
     if (detalle && situacion !== "leyendo" && !hoja.querySelector(".motivo")) {
       hoja.append(elemento("span", { className: "motivo", textContent: detalle }));
     }

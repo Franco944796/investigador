@@ -113,6 +113,7 @@ function aRegistro(conversacion) {
       intercambios: conversacion.intercambios,
       eventos: conversacion.eventos,
       aspectos: conversacion.aspectos,
+      pendientes: conversacion.pendientes,
     },
   };
 }
@@ -479,6 +480,7 @@ export function crearApp({ config, acceso, investigador, almacen, generarPDF, sa
         ...(fecha && { fecha }),
       })),
       intercambios: conversacion.intercambios,
+      pendientes: conversacion.pendientes ?? [],
       datos: datosDeInvestigacion(conversacion.eventos),
     });
   });

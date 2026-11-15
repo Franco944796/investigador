@@ -651,3 +651,46 @@ test("sin saldo en OpenAlex se avisa y las consultas de papers se hacen en la we
     "Hoy no quedan búsquedas de papers ni de libros en OpenAlex (se renuevan en unas 10 h): esta investigación usa solo la web.",
   );
 });
+
+test("las páginas sin acceso o que no se pudieron leer no cuentan como irrelevantes y quedan para revisar", async () => {
+  const paginas = ["util", "ficha-1", "bloqueada", "ficha-2", "ficha-3", "ficha-4", "otra-util"];
+  const investigador = crearInvestigador({
+    llm: {
+      ...llmFijo,
+      completarJSON: async (mensajes) =>
+        mensajes.at(-1).content.includes('"completo"') ? { completo: true } : { consultas: ["consulta"] },
+      completar: async (mensajes) =>
+        mensajes.at(-1).content.includes("a.test/ficha") ? "SIN ACCESO" : "Notas útiles.",
+    },
+    opciones: { ...OPCIONES, resultadosPorConsulta: 10, tareasEnParalelo: 1, irrelevantesSeguidas: 3 },
+    buscar: async () => ({
+      resultados: paginas.map((nombre) => ({
+        titulo: `Página [${nombre}]`,
+        url: `https://a.test/${nombre}`,
+        ...(nombre !== "bloqueada" && { contenido: LARGO }),
+      })),
+    }),
+    leerPagina: async () => {
+      throw new Error("respondió 403");
+    },
+  });
+
+  const eventos = [];
+  const conversacion = crearConversacion("id", "ana", "Tema");
+  await investigador.investigar(conversacion, flujoDe(eventos));
+
+  assert.equal(conversacion.fuentes.length, 2, "cuatro fichas seguidas no cortan la búsqueda");
+  assert.ok(!eventos.some((e) => e.tipo === "aviso"));
+  const descartadas = eventos.filter((e) => e.tipo === "fuente" && e.datos.estado === "descartada");
+  assert.ok(descartadas.every((e) => e.datos.revisar === true));
+  assert.deepEqual(
+    conversacion.pendientes.map((pendiente) => pendiente.motivo),
+    ["sin acceso al contenido", "respondió 403", "sin acceso al contenido", "sin acceso al contenido", "sin acceso al contenido"],
+  );
+  const seccion = conversacion.informe.split("## Fuentes para revisar a mano")[1];
+  const enlaces = [...seccion.matchAll(/^- \[(.+?)\]\((.+?)\) — (.+)$/gm)].map(([, titulo, url, motivo]) => [titulo, url, motivo]);
+  assert.equal(enlaces.length, 5);
+  assert.deepEqual(enlaces[0], ["Página ficha-1", "https://a.test/ficha-1", "sin acceso al contenido"]);
+  assert.deepEqual(enlaces.at(-1), ["Página bloqueada", "https://a.test/bloqueada", "respondió 403"], "las bloqueadas van al final");
+  assert.ok(conversacion.informe.indexOf("## Fuentes\n") < conversacion.informe.indexOf("## Fuentes para revisar a mano"));
+});

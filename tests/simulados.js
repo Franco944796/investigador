@@ -67,7 +67,7 @@ function responder(cuerpo, estado) {
         { pais: "DEU", valor: 15, cita: 2 },
       ],
     };
-    return `## Comparación\n\n| Opción | Dato |\n| --- | --- |\n| A | 10 [1] |\n| B | 20 [2] |\n\n\`\`\`grafico\n${JSON.stringify(grafico)}\n\`\`\`\n\n\`\`\`grafico\n${JSON.stringify(mapa)}\n\`\`\`\n\n\`\`\`grafico\n${JSON.stringify(imagen)}\n\`\`\``;
+    return `## Comparación\n\nEl empuje es $$F = \\dot{m} v_e + (p_e - p_0) A_e$$ con caudal $\\dot{m}$ [1].\n\n| Opción | Dato |\n| --- | --- |\n| A | 10 [1] |\n| B | 20 [2] |\n\n\`\`\`grafico\n${JSON.stringify(grafico)}\n\`\`\`\n\n\`\`\`grafico\n${JSON.stringify(mapa)}\n\`\`\`\n\n\`\`\`grafico\n${JSON.stringify(imagen)}\n\`\`\``;
   }
   if (ultimo.includes("comienzo del informe")) return "# Informe de prueba\n\n## Resumen\n\nResumen breve [1].";
   if (ultimo.includes("cierre del informe")) return "## Conclusiones\n\n- Punto **importante** [2].";
@@ -75,6 +75,7 @@ function responder(cuerpo, estado) {
     return '```json\n{"consultas": ["primera consulta", "segunda consulta"]}\n```';
   }
   if (ultimo.includes("IRRELEVANTE")) {
+    if (ultimo.includes("/muro")) return "SIN ACCESO";
     return ultimo.includes("/irrelevante")
       ? "IRRELEVANTE"
       : "Fecha: 2025-03\nTipo: oficial\nAspectos: 2\nNotas: la página aporta el dato 10 y el dato 20.";

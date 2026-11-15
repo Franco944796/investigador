@@ -3,4 +3,5 @@
 export const VENDOR = {
   "marked.js": "node_modules/marked/lib/marked.umd.js",
   "purify.js": "node_modules/dompurify/dist/purify.min.js",
+  "katex.js": "node_modules/katex/dist/katex.min.js",
 };

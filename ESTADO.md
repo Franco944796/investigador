@@ -236,12 +236,25 @@ que la PC de Franco esté prendida, sin costo, con historial guardado por person
 
 ## Pendiente
 
-1. Franco: push (reemplaza la versión incompleta que quedó en Render). No lanzar
-   investigaciones antes.
-2. Exhaustiva real en Render sobre propulsión con aire comprimido, cuando Franco dé la orden
-   (el pedido está en la conversación; conviene precisar la escala en Contexto para que no se
-   vaya a satélites). Revisar: mínimo de 60 búsquedas web, papers aparte con aviso de saldo,
-   que no se aleje del pedido, horas de cada etapa, gráficos depurados.
+1. Hecho sin push (2026-11-15, 70 pruebas pasan), tras detener Franco la Exhaustiva 4a91fcbe…:
+   a. Páginas que no se pudieron leer (muro de pago = SIN ACCESO del modelo, o error al leer) →
+      «Sin acceso» en el árbol y lista «Fuentes para revisar a mano» al final (chat, HTML, PDF).
+      No cuentan para el corte de 20 irrelevantes. Revisado en navegador con la simulación.
+   b. Arreglado un error de la página: `pintarFuente` tapaba el `estado` global y cada fuente
+      leída cortaba el flujo de eventos (la página reconectaba sin fin, «Despertando el
+      servidor…»). Venía del cambio de «Sin acceso» (no se sabe si llegó a Render).
+   c. Fórmulas LaTeX: `public/formulas.js` las separa del Markdown (`$…$`, `$$…$$`, `\(…\)`,
+      `\[…\]`; no toca código ni precios como «$20 a $30»). Página: KaTeX → MathML
+      (`vendor/katex.js`; anda en el HTML descargado; fuentes matemáticas del sistema en el CSS
+      porque la genérica `math` de Chromium en Linux pierde el punto de ṁ). PDF: destacadas con
+      MathJax → SVG, en línea como texto con subíndices; DejaVu Sans de respaldo para símbolos
+      que Roboto no tiene (→, ∝, ∇, ṁ). Los prompts piden LaTeX y «USD 20» para precios.
+      Sin verificar: celular (Android puede no traer fuente matemática).
+   d. `tests/simulacion.js`: mínimo de 4 búsquedas (variable `MIN_BUSQUEDAS`) y un resultado con
+      muro de pago por búsqueda.
+2. Franco: push; después relanzar la Exhaustiva de aire comprimido (mismo pedido, está en la
+   conversación) y revisar: mínimo de 60 búsquedas web, papers aparte, consultas en chino, que
+   no se aleje del pedido, horas de cada etapa, gráficos, fórmulas, lista para revisar a mano.
 3. Prueba del bloqueo por intentos en Render (8 códigos malos; Franco pidió hacerla al final).
 4. Despertar de Render tras 15 min sin uso desde la página de Pages.
 

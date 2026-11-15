@@ -1,8 +1,10 @@
 import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import * as fontkit from "fontkit";
 import { marked } from "marked";
 import pdfmake from "pdfmake";
+import { PARTIR, latexATexto, separarFormulas } from "../public/formulas.js";
 import { dibujarGrafico, imagenDe, tipoDeGrafico } from "../public/graficos.js";
 import { descargarImagen } from "./lector.js";
 
@@ -11,6 +13,8 @@ const ANCHO_UTIL = 483;
 
 const fuente = (archivo) =>
   fileURLToPath(new URL(`../node_modules/pdfmake/fonts/Roboto/${archivo}`, import.meta.url));
+const dejavu = (archivo) =>
+  fileURLToPath(new URL(`../node_modules/dejavu-fonts-ttf/ttf/${archivo}`, import.meta.url));
 
 pdfmake.setFonts({
   Roboto: {
@@ -19,38 +23,55 @@ pdfmake.setFonts({
     italics: fuente("Roboto-Italic.ttf"),
     bolditalics: fuente("Roboto-MediumItalic.ttf"),
   },
+  DejaVu: {
+    normal: dejavu("DejaVuSans.ttf"),
+    bold: dejavu("DejaVuSans-Bold.ttf"),
+    italics: dejavu("DejaVuSans-Oblique.ttf"),
+    bolditalics: dejavu("DejaVuSans-BoldOblique.ttf"),
+  },
 });
-// Roboto no trae flechas, tildes de verificación ni emojis, y el PDF los dibujaría como
-// recuadros vacíos. Las cuatro variantes cubren los mismos caracteres.
+// Roboto no trae flechas, símbolos matemáticos (ṁ, ∝, ∇, ⋅) ni tildes de verificación: esos
+// caracteres van con DejaVu Sans. Lo que ninguna tiene (emojis, chino) se sustituye o se quita;
+// el PDF los dibujaría como recuadros vacíos. Las cuatro variantes cubren los mismos caracteres.
 const ROBOTO = fontkit.openSync(fuente("Roboto-Regular.ttf"));
+const DEJAVU = fontkit.openSync(dejavu("DejaVuSans.ttf"));
 const SUSTITUTOS = {
-  "→": "->",
-  "←": "<-",
-  "↔": "<->",
-  "⇒": "=>",
-  "⇐": "<=",
-  "⇔": "<=>",
-  "↑": "^",
-  "✓": "√",
-  "✔": "√",
-  "✅": "√",
-  "✗": "×",
-  "✘": "×",
-  "❌": "×",
-  "⚠": "(!)",
-  "★": "*",
-  "☆": "*",
+  "✅": "✓",
+  "✔": "✓",
+  "❌": "✗",
+  "⭐": "★",
 };
 
 // Saltos de línea y tabulaciones no tienen glifo, pero sin ellos el Markdown queda en una sola línea.
 const SIN_GLIFO_PERO_NECESARIOS = new Set(["\n", "\r", "\t"]);
+
+const enRoboto = new Map();
+const robotoLoTiene = (caracter) => {
+  if (!enRoboto.has(caracter)) enRoboto.set(caracter, ROBOTO.hasGlyphForCodePoint(caracter.codePointAt(0)));
+  return enRoboto.get(caracter);
+};
+const tieneGlifo = (caracter) =>
+  robotoLoTiene(caracter) || DEJAVU.hasGlyphForCodePoint(caracter.codePointAt(0));
+
+// Parte el texto en tramos Roboto/DejaVu. Va por grupos (letra + acentos combinantes) para que el
+// punto de "ṁ" no quede en otra fuente que su letra.
+function porFuente(texto, estilo) {
+  const tramos = [];
+  for (const grupo of texto.match(/\P{M}\p{M}*|\p{M}+/gu) ?? []) {
+    const fuenteDelGrupo = /^\s$/u.test(grupo) || [...grupo].every(robotoLoTiene) ? null : "DejaVu";
+    const ultimo = tramos.at(-1);
+    if (ultimo && (ultimo.font ?? null) === fuenteDelGrupo) ultimo.text += grupo;
+    else tramos.push(fuenteDelGrupo ? { ...estilo, text: grupo, font: fuenteDelGrupo } : { ...estilo, text: grupo });
+  }
+  return tramos;
+}
 
 export function aptoParaPDF(texto) {
   let quitados = false;
   const apto = [...texto]
     .map((caracter) => {
       if (SIN_GLIFO_PERO_NECESARIOS.has(caracter)) return caracter;
-      if (ROBOTO.hasGlyphForCodePoint(caracter.codePointAt(0))) return caracter;
+      if (tieneGlifo(caracter)) return caracter;
       const sustituto = SUSTITUTOS[caracter] ?? (/\s/.test(caracter) ? " " : "");
       if (!sustituto) quitados = true;
       return sustituto;
@@ -73,18 +94,105 @@ const ENTIDADES = { "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&#39
 const decodificar = (texto) =>
   texto.replace(/&(?:amp|lt|gt|quot|#39);/g, (entidad) => ENTIDADES[entidad]);
 
+// Las fórmulas del informe que se está armando: bloques() es síncrona y generarPDF la fija justo
+// antes de llamarla.
+let formulas = [];
+
+const formulaEnLinea = (tex, estilo) =>
+  latexATexto(tex).flatMap(({ text, sub, sup }) =>
+    porFuente(aptoParaPDF(text), { ...estilo, ...(sub && { sub: true }), ...(sup && { sup: true }) }),
+  );
+
 function conCitas(texto, estilo, urls) {
-  if (estilo.link) return [{ ...estilo, text: texto }];
-  // Citas pegadas ("[5][18][22]") serían una sola palabra que pdfmake no puede cortar, y en
-  // tablas angostas empujan la columna fuera de la hoja.
-  return texto
-    .replace(/\](?=\[\d+\])/g, "] ")
-    .split(/(\[\d+\])/)
-    .filter(Boolean)
-    .map((parte) => {
-      const url = urls.get(Number(parte.match(/^\[(\d+)\]$/)?.[1]));
-      return url ? { ...estilo, text: parte, link: url, color: AZUL } : { ...estilo, text: parte };
-    });
+  return texto.split(PARTIR).flatMap((parte, indice) => {
+    if (indice % 2) {
+      const formula = formulas[Number(parte)];
+      if (!formula) return [];
+      // Las destacadas se dibujan aparte (ver conFormulas); queda una marca en su lugar.
+      return formula.display ? [{ ...estilo, formula: formula.tex }] : formulaEnLinea(formula.tex, estilo);
+    }
+    if (estilo.link) return porFuente(parte, estilo);
+    // Citas pegadas ("[5][18][22]") serían una sola palabra que pdfmake no puede cortar, y en
+    // tablas angostas empujan la columna fuera de la hoja.
+    return parte
+      .replace(/\](?=\[\d+\])/g, "] ")
+      .split(/(\[\d+\])/)
+      .filter(Boolean)
+      .flatMap((trozo) => {
+        const url = urls.get(Number(trozo.match(/^\[(\d+)\]$/)?.[1]));
+        return url ? [{ ...estilo, text: trozo, link: url, color: AZUL }] : porFuente(trozo, estilo);
+      });
+  });
+}
+
+// En títulos y celdas una fórmula destacada no puede ir aparte: va como texto.
+const enLinea = (tramos) =>
+  tramos.flatMap(({ formula, ...estilo }) => (formula === undefined ? [estilo] : formulaEnLinea(formula, estilo)));
+
+let mathjax = null;
+function cargarMathJax() {
+  if (mathjax) return mathjax;
+  // mathjax-full es CommonJS y pesa: se carga recién con la primera fórmula destacada.
+  const requerir = createRequire(import.meta.url);
+  const { mathjax: nucleo } = requerir("mathjax-full/js/mathjax.js");
+  const { TeX } = requerir("mathjax-full/js/input/tex.js");
+  const { SVG } = requerir("mathjax-full/js/output/svg.js");
+  const { liteAdaptor } = requerir("mathjax-full/js/adaptors/liteAdaptor.js");
+  const { RegisterHTMLHandler } = requerir("mathjax-full/js/handlers/html.js");
+  requerir("mathjax-full/js/input/tex/base/BaseConfiguration.js");
+  requerir("mathjax-full/js/input/tex/ams/AmsConfiguration.js");
+  requerir("mathjax-full/js/input/tex/noundefined/NoUndefinedConfiguration.js");
+  const adaptador = liteAdaptor();
+  RegisterHTMLHandler(adaptador);
+  const documento = nucleo.document("", {
+    InputJax: new TeX({ packages: ["base", "ams", "noundefined"] }),
+    OutputJax: new SVG({ fontCache: "none" }),
+  });
+  mathjax = (tex) => adaptador.innerHTML(documento.convert(tex, { display: true }));
+  return mathjax;
+}
+
+const TAMANO_FORMULA = 12;
+
+// MathJax mide en milésimas de "em"; pdfmake necesita puntos y no entiende currentColor ni el
+// estilo de alineación vertical.
+function formulaDestacada(tex) {
+  try {
+    const svg = cargarMathJax()(tex);
+    const caja = svg.match(/viewBox="[-\d.]+ [-\d.]+ ([\d.]+) ([\d.]+)"/);
+    if (!caja || /data-mjx-error|<merror/.test(svg)) throw new Error("fórmula con errores");
+    const escala = Math.min(1, ANCHO_UTIL / ((Number(caja[1]) / 1000) * TAMANO_FORMULA));
+    const [ancho, alto] = [caja[1], caja[2]].map((medida) => (Number(medida) / 1000) * TAMANO_FORMULA * escala);
+    const limpio = svg
+      .replace(/currentColor/g, "#000000")
+      .replace(/ style="[^"]*"/, "")
+      .replace(/ width="[^"]+" height="[^"]+"/, ` width="${ancho.toFixed(2)}" height="${alto.toFixed(2)}"`);
+    return { svg: limpio, width: ancho, height: alto, alignment: "center", margin: [0, 4, 0, 10] };
+  } catch {
+    return { text: formulaEnLinea(tex, {}), alignment: "center", margin: [0, 4, 0, 10] };
+  }
+}
+
+// Un párrafo con fórmulas destacadas se parte: texto, fórmula dibujada, texto.
+function conFormulas(tramos, extra) {
+  if (!tramos.some((tramo) => tramo.formula !== undefined)) return [{ text: tramos, ...extra }];
+  const salida = [];
+  let texto = [];
+  const cerrarTexto = () => {
+    while (texto.length && !texto.at(-1).text?.trim()) texto.pop();
+    if (texto.length) salida.push({ text: texto, ...extra });
+    texto = [];
+  };
+  for (const tramo of tramos) {
+    if (tramo.formula === undefined) {
+      if (texto.length || tramo.text?.trim()) texto.push(tramo);
+    } else {
+      cerrarTexto();
+      salida.push(formulaDestacada(tramo.formula));
+    }
+  }
+  cerrarTexto();
+  return salida;
 }
 
 function tramos(tokens, estilo, urls) {
@@ -101,7 +209,7 @@ function tramos(tokens, estilo, urls) {
           ? tramos(token.tokens, { ...estilo, link: token.href, color: AZUL }, urls)
           : tramos(token.tokens, estilo, urls);
       case "codespan":
-        return [{ ...estilo, text: decodificar(token.text), background: "#eeeeee" }];
+        return porFuente(decodificar(token.text), { ...estilo, background: "#eeeeee" });
       case "br":
         return [{ text: "\n" }];
       case "image":
@@ -133,11 +241,11 @@ function bloques(tokens, urls, imagenes = new Map()) {
   return tokens.flatMap((token) => {
     switch (token.type) {
       case "heading":
-        return [{ text: tramos(token.tokens, {}, urls), style: `h${Math.min(token.depth, 3)}` }];
+        return [{ text: enLinea(tramos(token.tokens, {}, urls)), style: `h${Math.min(token.depth, 3)}` }];
       case "paragraph":
-        return [{ text: tramos(token.tokens, {}, urls), margin: [0, 0, 0, 8] }];
+        return conFormulas(tramos(token.tokens, {}, urls), { margin: [0, 0, 0, 8] });
       case "text":
-        return [{ text: tramos(token.tokens ?? [token], {}, urls) }];
+        return conFormulas(tramos(token.tokens ?? [token], {}, urls), {});
       case "list": {
         const items = token.items.map((item) => ({ stack: bloques(item.tokens, urls, imagenes) }));
         const margin = [0, 0, 0, 8];
@@ -149,14 +257,14 @@ function bloques(tokens, urls, imagenes = new Map()) {
         if (token.lang === "grafico") return bloqueDeGrafico(token.text, urls, imagenes);
         return [
           {
-            table: { widths: ["*"], body: [[{ text: token.text, style: "codigo" }]] },
+            table: { widths: ["*"], body: [[{ text: porFuente(token.text, {}), style: "codigo" }]] },
             layout: "noBorders",
             margin: [0, 2, 0, 10],
           },
         ];
       case "table": {
         const fila = (celdas, extra) =>
-          celdas.map((celda) => ({ text: tramos(celda.tokens, {}, urls), ...extra }));
+          celdas.map((celda) => ({ text: enLinea(tramos(celda.tokens, {}, urls)), ...extra }));
         const columnas = token.header.length;
         return [
           {
@@ -263,7 +371,8 @@ function bloqueDeGrafico(texto, urls, imagenes) {
 
 export async function generarPDF({ titulo, markdown, fuentes }) {
   const urls = new Map(fuentes.map((fuente) => [fuente.n, fuente.url]));
-  const tokens = marked.lexer(aptoParaPDF(markdown));
+  const separado = separarFormulas(markdown);
+  const tokens = marked.lexer(aptoParaPDF(separado.texto));
   const direcciones = codigosDeGrafico(tokens).map((texto) => imagenDe(texto)?.url).filter(Boolean);
   const imagenes = new Map(
     await Promise.all(
@@ -274,6 +383,8 @@ export async function generarPDF({ titulo, markdown, fuentes }) {
     ),
   );
   const fecha = new Date().toLocaleDateString("es-AR");
+  formulas = separado.formulas;
+  const contenido = bloques(tokens, urls, imagenes);
   return pdfmake
     .createPdf({
       info: { title: titulo },
@@ -287,7 +398,7 @@ export async function generarPDF({ titulo, markdown, fuentes }) {
         color: "#777777",
         margin: [0, 24, 0, 0],
       }),
-      content: bloques(tokens, urls, imagenes),
+      content: contenido,
       styles: {
         h1: { fontSize: 20, bold: true, lineHeight: 1.15, margin: [0, 0, 0, 12] },
         h2: { fontSize: 14, bold: true, margin: [0, 12, 0, 6] },

@@ -281,6 +281,24 @@ pre code {
   background: none;
 }
 
+/* MathML que dibuja el navegador: las fórmulas largas se desplazan en vez de salirse de la hoja.
+   La genérica "math" sola, en Chromium sobre Linux, pierde acentos como el punto de ṁ: van
+   antes las fuentes matemáticas de cada sistema (macOS/iOS, Windows, Linux, Android). */
+math {
+  font-family:
+    "Latin Modern Math", "STIX Two Math", "Cambria Math", "DejaVu Math TeX Gyre", "Noto Sans Math",
+    math, serif;
+  font-size: 1.05em;
+}
+
+.formula.destacada {
+  display: block;
+  margin: 0.8em 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  text-align: center;
+}
+
 .tabla {
   overflow-x: auto;
   margin: 1.2em 0;

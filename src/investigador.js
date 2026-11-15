@@ -24,6 +24,8 @@ const MINIMO_RESUMEN = 400;
 const MAXIMO_LEIDO = 600000;
 const NOMBRES_DE_DESTINOS = { academico: "artículos académicos", libros: "libros" };
 const MAX_ASPECTOS = 15;
+const NO_APORTA = "no aporta al tema";
+const SIN_ACCESO = "sin acceso al contenido";
 
 export function normalizarUrl(direccion) {
   let url;
@@ -335,6 +337,31 @@ const nombresDe = (idiomas) => {
 
 // No se usa una lista numerada de Markdown: renumera 1, 2, 3… y los números dejarían de
 // coincidir con las citas del texto.
+const MAX_PENDIENTES = 80;
+
+// Páginas que no se pudieron leer: primero las que el modelo vio que tratan el tema pero están
+// restringidas. El título de la sección no puede ser «## Fuentes» a secas: el informe HTML corta ahí.
+export function listaDePendientes(pendientes = []) {
+  const unicas = [...new Map(pendientes.map((pendiente) => [pendiente.url, pendiente])).values()];
+  if (!unicas.length) return "";
+  const ordenadas = [
+    ...unicas.filter((pendiente) => pendiente.motivo === SIN_ACCESO),
+    ...unicas.filter((pendiente) => pendiente.motivo !== SIN_ACCESO),
+  ];
+  const lineas = ordenadas.slice(0, MAX_PENDIENTES).map(({ url, titulo, motivo }) => {
+    const limpio = titulo.replace(/[[\]]/g, " ").replace(/\s+/g, " ").trim() || url;
+    return `- [${limpio}](${url.replace(/\(/g, "%28").replace(/\)/g, "%29")}) — ${motivo}`;
+  });
+  const resto = ordenadas.length - lineas.length;
+  return `
+## Fuentes para revisar a mano
+
+Estas páginas aparecieron en las búsquedas pero no se pudieron leer, así que el informe no las usa. Puede valer la pena abrirlas.
+
+${lineas.join("\n")}${resto > 0 ? `\n- … y ${resto} más.` : ""}
+`;
+}
+
 export function listaDeFuentes(fuentes, cuerpo) {
   // También cuentan las citas de los gráficos ("cita": n dentro de los bloques ```grafico).
   const citadas = new Set(
@@ -426,9 +453,11 @@ export function crearInvestigador({
         throw new Error("no se pudo analizar");
       }
       const { notas, aspectos, fecha, tipo } = interpretarNotas(respuesta ?? "");
+      // Trata el tema pero solo se ve una ficha o un muro de pago: no cuenta como irrelevante.
+      if (/^\W*SIN ACCESO\W*$/i.test(notas)) throw new Error(SIN_ACCESO);
       if (!notas || /^\W*IRRELEVANTE\W*$/i.test(notas)) {
         conversacion.irrelevantesSeguidas++;
-        throw new Error("no aporta al tema");
+        throw new Error(NO_APORTA);
       }
 
       conversacion.irrelevantesSeguidas = 0;
@@ -445,7 +474,17 @@ export function crearInvestigador({
       return true;
     } catch (error) {
       if (signal.aborted) throw error;
-      emitir("fuente", { id, estado: "descartada", motivo: error.message });
+      // Todo lo que no se descartó por tratar otro tema (sin acceso, bloqueada, PDF, error al
+      // leer) queda anotado para que la persona pueda revisarlo a mano.
+      const revisar = error.message !== NO_APORTA;
+      if (revisar) {
+        (conversacion.pendientes ??= []).push({
+          url: candidata.url,
+          titulo: candidata.titulo || candidata.url,
+          motivo: error.message,
+        });
+      }
+      emitir("fuente", { id, estado: "descartada", motivo: error.message, ...(revisar && { revisar }) });
       return false;
     }
   }
@@ -783,7 +822,8 @@ export function crearInvestigador({
     const cuerpo = opciones.informePorSecciones
       ? await redactarPorSecciones(conversacion, contexto)
       : await redactarDeUnaVez(conversacion, contexto);
-    const anexo = listaDeFuentes(conversacion.fuentes, cuerpo);
+    const anexo =
+      listaDeFuentes(conversacion.fuentes, cuerpo) + listaDePendientes(conversacion.pendientes);
     emitir("texto", { delta: anexo });
     conversacion.informe = cuerpo + anexo;
   }
