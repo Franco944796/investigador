@@ -782,3 +782,93 @@ test("las páginas sin acceso o que no se pudieron leer quedan para revisar a ma
   assert.deepEqual(enlaces.at(-1), ["Página bloqueada", "https://a.test/bloqueada", "respondió 403"], "las bloqueadas van al final");
   assert.ok(conversacion.informe.indexOf("## Fuentes\n") < conversacion.informe.indexOf("## Fuentes para revisar a mano"));
 });
+
+// Lo que se guarda en la base y vuelve tras un reinicio (ver aRegistro en src/app.js).
+function recargada(conversacion) {
+  const { fuentes, consultas, vistas, candidatas, aspectos, pendientes, rendimiento, destinos, idiomas, progreso } =
+    conversacion;
+  const datos = JSON.parse(
+    JSON.stringify({ fuentes, consultas, vistas: [...vistas], candidatas, aspectos, pendientes, rendimiento, destinos, idiomas, progreso }),
+  );
+  return Object.assign(crearConversacion(conversacion.id, conversacion.dueno, conversacion.tema), datos, {
+    vistas: new Set(datos.vistas),
+  });
+}
+
+test("retomar: una investigación cortada sigue sin planificar de nuevo, sin repetir búsquedas y dentro del tope", async () => {
+  const buscadas = [];
+  let planes = 0;
+  let revisiones = 0;
+  let cortar = true;
+  const control = new AbortController();
+  const crear = () =>
+    crearInvestigador({
+      llm: {
+        ...llmFijo,
+        completarJSON: async (mensajes) => {
+          if (!mensajes.at(-1).content.includes("La investigación sigue")) {
+            planes++;
+            return { consultas: ["alfa uno", "beta dos"] };
+          }
+          revisiones++;
+          return { consultas: [`tema${revisiones}a detalle${revisiones}a`, `tema${revisiones}b detalle${revisiones}b`] };
+        },
+      },
+      opciones: { ...OPCIONES, consultasIniciales: 2, consultasPorRonda: 2, rondasExtra: 10, maxBusquedas: 8, resultadosPorConsulta: 1 },
+      buscar: async (consulta) => {
+        buscadas.push(consulta);
+        if (cortar && buscadas.length === 5) {
+          control.abort();
+          throw new Error("se reinició el servidor");
+        }
+        return { resultados: [{ titulo: consulta, url: `https://a.test/${encodeURIComponent(consulta)}`, contenido: LARGO }] };
+      },
+      leerPagina: async () => assert.fail("no hace falta leer"),
+    });
+  const conversacion = crearConversacion("id", "ana", "Tema");
+  await assert.rejects(crear().investigar(conversacion, { emitir: () => {}, signal: control.signal }));
+  assert.equal(conversacion.progreso.planificada, true);
+  assert.equal(conversacion.progreso.buscada, false);
+
+  cortar = false;
+  const eventos = [];
+  const retomada = recargada(conversacion);
+  await crear().investigar(retomada, flujoDe(eventos), { retomar: true });
+
+  assert.equal(planes, 1, "no se vuelve a planificar");
+  assert.equal(buscadas.length, 8, "lo hecho antes del corte cuenta para el tope");
+  assert.equal(new Set(buscadas).size, 8, "ninguna búsqueda se repite");
+  const avisos = eventos.filter((e) => e.tipo === "aviso").map((e) => e.datos.texto);
+  assert.match(avisos[0], /^Retomo la investigación desde lo último guardado: \d+ búsquedas web y \d+ fuentes leídas\.$/);
+  assert.ok(retomada.informe.startsWith("# Informe"));
+  assert.equal(retomada.progreso.buscada, true);
+});
+
+test("retomar: si ya había terminado de buscar, solo vuelve a redactar", async () => {
+  const conversacion = crearConversacion("id", "ana", "Tema");
+  conversacion.fuentes.push({ n: 1, url: "https://a.test/1", titulo: "Uno", notas: "Dato." });
+  conversacion.rendimiento = [{ texto: "consulta", destino: "web", nuevas: 1, leidas: 1, sinAcceso: 0 }];
+  conversacion.destinos = { dominios: [], academico: false, libros: false };
+  conversacion.progreso = {
+    planificada: true,
+    buscada: true,
+    ronda: 3,
+    rondasVacias: 0,
+    tandasLibresVacias: 0,
+    sinAporte: { pagas: 0, libres: 0 },
+    terminados: [],
+  };
+  const eventos = [];
+  const investigador = crearInvestigador({
+    llm: { ...llmFijo, completarJSON: async () => assert.fail("no se planifica ni se revisa") },
+    opciones: OPCIONES,
+    buscar: async () => assert.fail("no se busca"),
+    leerPagina: async () => assert.fail("no se lee"),
+  });
+  await investigador.investigar(recargada(conversacion), flujoDe(eventos), { retomar: true });
+  const avisos = eventos.filter((e) => e.tipo === "aviso").map((e) => e.datos.texto);
+  assert.deepEqual(avisos, [
+    "Retomo la investigación: las búsquedas ya estaban terminadas (1 búsqueda web); vuelvo a redactar el informe (1 fuente leída).",
+  ]);
+  assert.ok(eventos.some((e) => e.tipo === "texto"));
+});

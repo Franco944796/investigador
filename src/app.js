@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import express from "express";
-import { crearConversacion, ErrorInvestigacion } from "./investigador.js";
+import { crearConversacion, ErrorInvestigacion, normalizarUrl } from "./investigador.js";
 import { ErrorLLM } from "./llm.js";
 import { ErrorPDF } from "./pdfAparte.js";
 import { nombreDeArchivo, tituloDelPedido } from "./titulos.js";
@@ -14,6 +14,26 @@ const MAX_TEXTO = 2000;
 const GUARDADO_MS = 120000;
 const RETENER_EN_MEMORIA_MS = 10 * 60 * 1000;
 const ESTADO_FINAL = { completa: "lista", fallida: "fallida", cancelada: "cancelada" };
+
+// Se retoma una investigación que se cortó (reinicio del servidor) o falló, antes de terminar el
+// informe. Las guardadas antes de que existiera `progreso` no tienen con qué retomarse.
+const retomable = (conversacion) =>
+  !conversacion.ocupada &&
+  !conversacion.informe &&
+  ["interrumpida", "fallida"].includes(conversacion.estado) &&
+  Boolean(conversacion.progreso);
+
+// Las fuentes que se estaban leyendo cuando se cortó: se dan por perdidas y su dirección se libera
+// para que otra búsqueda pueda traerlas de nuevo.
+function lecturasCortadas(eventos) {
+  const leyendo = new Map();
+  for (const { tipo, datos } of eventos) {
+    if (tipo !== "fuente") continue;
+    if (datos.estado === "leyendo") leyendo.set(datos.id, datos.url);
+    else leyendo.delete(datos.id);
+  }
+  return leyendo;
+}
 
 const ruta = (relativa) => fileURLToPath(new URL(relativa, import.meta.url));
 
@@ -115,6 +135,11 @@ function aRegistro(conversacion) {
       eventos: conversacion.eventos,
       aspectos: conversacion.aspectos,
       pendientes: conversacion.pendientes,
+      // Para poder retomarla si se corta (ver investigar con `retomar`).
+      rendimiento: conversacion.rendimiento,
+      destinos: conversacion.destinos,
+      idiomas: conversacion.idiomas,
+      progreso: conversacion.progreso,
     },
   };
 }
@@ -161,7 +186,10 @@ export function crearApp({ config, acceso, investigador, almacen, generarPDF, sa
   const activas = new Map();
   const cargando = new Map();
   const programados = new Map();
-  const conTurno = crearCola(opciones.simultaneas);
+  // Una sola tarea a la vez, sin variable para cambiarlo (decisión de Franco, 2026-11-16): con
+  // 512 MB en Render, dos investigaciones grandes juntas pueden agotar la memoria y reiniciar el
+  // servidor, que corta todo lo que esté corriendo. Las demás esperan en cola.
+  const conTurno = crearCola(1);
 
   function guardar(conversacion) {
     clearTimeout(programados.get(conversacion.id));
@@ -232,7 +260,7 @@ export function crearApp({ config, acceso, investigador, almacen, generarPDF, sa
     return conversacion;
   }
 
-  function lanzar(conversacion, persona, tarea, { esInvestigacion }) {
+  function lanzar(conversacion, persona, tarea, { esInvestigacion, retomada = false }) {
     const control = new AbortController();
     const flujo = {
       signal: control.signal,
@@ -240,7 +268,7 @@ export function crearApp({ config, acceso, investigador, almacen, generarPDF, sa
     };
     Object.assign(conversacion, { control, ocupada: true });
     if (esInvestigacion) conversacion.estado = "en-curso";
-    flujo.emitir("inicio", { hora: Date.now() });
+    flujo.emitir(retomada ? "retomada" : "inicio", { hora: Date.now() });
 
     return (async () => {
       let resultado = "completa";
@@ -268,7 +296,7 @@ export function crearApp({ config, acceso, investigador, almacen, generarPDF, sa
       if (esInvestigacion) {
         conversacion.estado = ESTADO_FINAL[resultado];
         // Lo cancelado no se devuelve: cortar a mitad de camino ya gastó cuota de los proveedores.
-        if (resultado === "fallida") acceso.registrarUso(persona, -1);
+        if (resultado === "fallida" && !retomada) acceso.registrarUso(persona, -1);
       }
       if (resultado === "completa") {
         flujo.emitir("fin", { uso: acceso.uso(persona), pdf: esInvestigacion, hora: Date.now() });
@@ -390,7 +418,7 @@ export function crearApp({ config, acceso, investigador, almacen, generarPDF, sa
     for (const { tipo, datos } of conversacion.eventos) enviar(tipo, datos);
     // Marca el fin de la repetición; si no está ocupada y el último turno no terminó, el
     // servidor se reinició a mitad de camino.
-    enviar("listo", { ocupada: conversacion.ocupada });
+    enviar("listo", { ocupada: conversacion.ocupada, retomable: retomable(conversacion) });
     conversacion.suscriptores.add(enviar);
     res.on("close", () => conversacion.suscriptores.delete(enviar));
   });
@@ -418,6 +446,29 @@ export function crearApp({ config, acceso, investigador, almacen, generarPDF, sa
       { esInvestigacion: false },
     );
     res.status(202).json({});
+  });
+
+  app.post("/api/conversaciones/:id/retomar", exigirSesion, async (req, res) => {
+    const conversacion = await cargar(req, res, req.params.id);
+    if (!conversacion) return;
+    if (!retomable(conversacion)) {
+      return res.status(409).json({ error: "Esta investigación no se puede retomar." });
+    }
+    const cortadas = lecturasCortadas(conversacion.eventos);
+    for (const url of cortadas.values()) conversacion.vistas.delete(normalizarUrl(url));
+    lanzar(
+      conversacion,
+      req.persona,
+      (flujo) => {
+        for (const id of cortadas.keys()) {
+          flujo.emitir("fuente", { id, estado: "descartada", motivo: "se cortó mientras se leía" });
+        }
+        return investigador.investigar(conversacion, flujo, { retomar: true });
+      },
+      { esInvestigacion: true, retomada: true },
+    );
+    guardar(conversacion);
+    res.status(202).json({ conversacion: conversacion.id });
   });
 
   app.post("/api/conversaciones/:id/cancelar", exigirSesion, async (req, res) => {

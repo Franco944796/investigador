@@ -15,7 +15,7 @@ before(async () => {
     acceso: crearAcceso("ana:codigo-de-ana:0"),
     almacen: crearAlmacenMemoria(),
     urlLLM: llmSimulado.urlBase,
-    entorno: { CONSULTAS_INICIALES: "1", RONDAS_EXTRA: "0", INVESTIGACIONES_SIMULTANEAS: "1" },
+    entorno: { CONSULTAS_INICIALES: "1", RONDAS_EXTRA: "0" },
     demoraLectorMs: 300,
   });
   servidor = levantado.servidor;
@@ -52,7 +52,7 @@ test("cerrar la página no corta la investigación; Detener sí, y libera el tur
   assert.equal(await terminal(await iniciar("Tema siguiente")), "fin");
 });
 
-test("con un solo turno, la segunda espera en cola y se puede cancelar mientras espera", async () => {
+test("una sola investigación a la vez: la segunda espera en cola y se puede cancelar mientras espera", async () => {
   const [primera, segunda] = await Promise.all([iniciar("Tema uno"), iniciar("Tema dos")]);
   const enCola = (await ana.eventos(segunda, { hastaListo: true })).eventos;
   assert.ok(enCola.some((e) => e.tipo === "etapa" && e.datos.texto === "En cola (puesto 1)"));

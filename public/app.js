@@ -117,7 +117,9 @@ function actualizarRedactor() {
   texto.placeholder = estado.ocupada
     ? "Investigando… podés cerrar la página"
     : cerrada
-      ? "Esta investigación no terminó: empezá una nueva"
+      ? estado.retomable
+        ? "Esta investigación no terminó: retomala o empezá una nueva"
+        : "Esta investigación no terminó: empezá una nueva"
       : enConversacion
         ? "Preguntá sobre el informe"
         : "Tema a investigar";
@@ -180,6 +182,7 @@ function agregarRespuesta(pregunta = "") {
   const informe = nodo.querySelector(".informe");
   const aviso = nodo.querySelector(".aviso");
   const segundoPlano = nodo.querySelector(".segundo-plano");
+  const reanudar = nodo.querySelector(".reanudar");
   const filas = new Map();
   let markdown = "";
   let pintadoPendiente = false;
@@ -188,7 +191,7 @@ function agregarRespuesta(pregunta = "") {
   let inicio = null;
   let final = null;
   let terminada = false;
-  const reloj = setInterval(() => contar(), 30000);
+  let reloj = setInterval(() => contar(), 30000);
 
   mensajes.append(nodo);
   mensajes.scrollTop = mensajes.scrollHeight;
@@ -335,6 +338,19 @@ function agregarRespuesta(pregunta = "") {
           segundoPlano.hidden = false;
           contar();
         }
+        // Una interrumpida o fallida que se retomó vuelve a estar en curso, con el mismo árbol.
+        if (tipo === "retomada") {
+          terminada = false;
+          final = null;
+          clearInterval(reloj);
+          reloj = setInterval(() => contar(), 30000);
+          delete progreso.dataset.estado;
+          progreso.open = true;
+          segundoPlano.hidden = false;
+          aviso.hidden = true;
+          reanudar.hidden = true;
+          contar();
+        }
         if (tipo === "etapa") etapa.textContent = datos.texto;
         if (tipo === "espera") etapa.textContent = `Esperando cupo del proveedor (${datos.segundos} s)`;
         if (tipo === "aviso") agregarNota("Aviso", datos.texto);
@@ -373,6 +389,21 @@ function agregarRespuesta(pregunta = "") {
       cerrar("fallida", "No se pudo completar", hora);
       aviso.textContent = mensaje;
       aviso.hidden = false;
+    },
+    ofrecerRetomar(alTocar) {
+      const boton = reanudar.querySelector("button");
+      reanudar.hidden = false;
+      boton.disabled = false;
+      boton.onclick = async () => {
+        boton.disabled = true;
+        try {
+          await alTocar();
+        } catch (fallo) {
+          boton.disabled = false;
+          aviso.textContent = fallo.message;
+          aviso.hidden = false;
+        }
+      };
     },
   };
   return vista;
@@ -427,6 +458,12 @@ function limpiarMensajes() {
   estado.ocupada = false;
   estado.conInforme = false;
   estado.enVivo = false;
+  estado.retomable = false;
+}
+
+// La respuesta llega por el flujo de eventos que ya está abierto («retomada» y lo que sigue).
+async function retomar() {
+  await pedir(`/api/conversaciones/${estado.conversacion}/retomar`, { metodo: "POST" });
 }
 
 function procesar({ tipo, datos }) {
@@ -438,12 +475,23 @@ function procesar({ tipo, datos }) {
     estado.enVivo = true;
     // Si el servidor no la tiene en curso pero el último turno no terminó, se reinició a mitad.
     estado.ocupada = datos.ocupada;
+    estado.retomable = Boolean(datos.retomable);
     if (!datos.ocupada && estado.vista && !estado.vista.terminada) {
-      estado.vista.fallar("Se interrumpió porque el servidor se reinició. Podés empezarla de nuevo.");
+      estado.vista.fallar(
+        datos.retomable
+          ? "Se interrumpió porque el servidor se reinició. Podés retomarla desde donde quedó, sin repetir las búsquedas hechas."
+          : "Se interrumpió porque el servidor se reinició. Podés empezarla de nuevo.",
+      );
     }
+    if (datos.retomable) estado.vista?.ofrecerRetomar(retomar);
     mensajes.scrollTop = mensajes.scrollHeight;
   } else {
     estado.vista?.recibir({ tipo, datos });
+    if (tipo === "retomada") {
+      estado.ocupada = true;
+      estado.retomable = false;
+      if (estado.enVivo) cargarHistorial();
+    }
     if (TERMINALES.has(tipo)) {
       estado.ocupada = false;
       // Solo los finales en vivo cambian el estado en la lista; los repetidos al conectar, no.

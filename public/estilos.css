@@ -994,6 +994,10 @@ a.cita:hover {
   margin-top: 16px;
 }
 
+.reanudar {
+  margin: 0 0 12px;
+}
+
 .redactor {
   width: 100%;
   max-width: calc(var(--ancho) + 32px);

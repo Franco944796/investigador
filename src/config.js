@@ -102,7 +102,6 @@ export function leerConfig(env = process.env) {
       fuentesPorSeguimiento: entero(env, "FUENTES_POR_SEGUIMIENTO", 24),
       caracteresPorFuente: entero(env, "CARACTERES_POR_FUENTE", 9000),
       tareasEnParalelo: entero(env, "TAREAS_EN_PARALELO", 3),
-      simultaneas: entero(env, "INVESTIGACIONES_SIMULTANEAS", 2),
       seguimientosPorInforme: entero(env, "SEGUIMIENTOS_POR_INFORME", 20),
     },
   };

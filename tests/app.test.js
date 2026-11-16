@@ -197,7 +197,7 @@ test("el historial sobrevive a un reinicio del servidor y se puede borrar", asyn
   const sinTexto = (lista) => lista.filter((evento) => !["texto", "listo"].includes(evento.tipo));
   assert.deepEqual(sinTexto(repetidos.slice(0, -1)), sinTexto(original));
   assert.equal(textoDe(repetidos), textoDe(original));
-  assert.deepEqual(repetidos.at(-1), { tipo: "listo", datos: { ocupada: false } });
+  assert.deepEqual(repetidos.at(-1), { tipo: "listo", datos: { ocupada: false, retomable: false } });
 
   const pdf = await despues.pedir(`/api/informe/${conversacion}`);
   assert.equal(pdf.status, 200);
@@ -288,4 +288,75 @@ test("PDF: el armado se guarda para la próxima descarga y, si no alcanza la mem
   assert.equal(fallida.status, 503);
   assert.deepEqual(await fallida.json(), { error: "El informe es demasiado grande para armar el PDF." });
   assert.equal((await carla.pedir("/api/sesion")).status, 200, "el servidor sigue andando");
+});
+
+test("retomar: una interrumpida se ofrece para retomar, sigue en el mismo turno y libera las lecturas cortadas", async () => {
+  const almacen = crearAlmacenMemoria();
+  await almacen.preparar();
+  const ahora = Date.now();
+  await almacen.guardar({
+    id: "cortada",
+    dueno: "ana",
+    tema: "Tema cortado",
+    profundidad: "exhaustiva",
+    estado: "interrumpida",
+    etapa: "Buscando y leyendo fuentes",
+    creada: ahora,
+    actualizada: ahora,
+    datos: {
+      fuentes: [{ n: 1, url: "https://ejemplo.test/leida", titulo: "Leída", notas: "Dato 10." }],
+      consultas: ["primera consulta"],
+      vistas: ["https://ejemplo.test/leida", "https://ejemplo.test/a-medias"],
+      candidatas: 2,
+      informe: "",
+      intercambios: [],
+      eventos: [
+        { tipo: "pregunta", datos: { texto: "Tema cortado", profundidad: "exhaustiva" } },
+        { tipo: "inicio", datos: { hora: ahora } },
+        { tipo: "consulta", datos: { id: 1, texto: "primera consulta" } },
+        { tipo: "fuente", datos: { id: 1, url: "https://ejemplo.test/leida", estado: "leyendo", consulta: 1 } },
+        { tipo: "fuente", datos: { id: 1, url: "https://ejemplo.test/leida", estado: "lista", n: 1 } },
+        { tipo: "fuente", datos: { id: 2, url: "https://ejemplo.test/a-medias", estado: "leyendo", consulta: 1 } },
+      ],
+      rendimiento: [{ texto: "primera consulta", destino: "web", nuevas: 2, leidas: 1, sinAcceso: 0 }],
+      destinos: { dominios: [], academico: false, libros: false },
+      progreso: {
+        planificada: true,
+        buscada: false,
+        ronda: 0,
+        rondasVacias: 0,
+        tandasLibresVacias: 0,
+        sinAporte: { pagas: 0, libres: 0 },
+        terminados: [],
+      },
+    },
+  });
+  const levantado = await levantar({
+    acceso: crearAcceso("ana:codigo-de-ana:0"),
+    almacen,
+    urlLLM: llmSimulado.urlBase,
+    entorno: ENTORNO,
+  });
+  cerrar.push(levantado.servidor);
+  const ana = cliente(levantado.base);
+  await ana.entrar("codigo-de-ana");
+
+  const antes = (await ana.eventos("cortada", { hastaListo: true })).eventos;
+  assert.deepEqual(antes.at(-1), { tipo: "listo", datos: { ocupada: false, retomable: true } });
+
+  assert.equal((await ana.pedir("/api/conversaciones/cortada/retomar", { metodo: "POST" })).status, 202);
+  assert.equal((await ana.pedir("/api/conversaciones/cortada/retomar", { metodo: "POST" })).status, 409);
+  const despues = (await ana.eventos("cortada")).eventos;
+  const nuevos = despues.slice(antes.length - 1);
+  assert.equal(nuevos[0].tipo, "retomada");
+  assert.deepEqual(nuevos[1], {
+    tipo: "fuente",
+    datos: { id: 2, estado: "descartada", motivo: "se cortó mientras se leía" },
+  });
+  assert.equal(despues.filter((e) => e.tipo === "pregunta").length, 1, "sigue en el mismo turno");
+  assert.equal(despues.at(-1).tipo, "fin");
+  assert.ok(textoDe(despues).startsWith("# Informe de prueba"));
+  const lista = await (await ana.pedir("/api/conversaciones")).json();
+  assert.equal(lista[0].estado, "lista");
+  assert.equal((await ana.pedir("/api/conversaciones/cortada/retomar", { metodo: "POST" })).status, 409);
 });

@@ -76,6 +76,10 @@ function dominioDe(valor) {
   return dominio;
 }
 
+const cuantas = (n, una, varias) => `${n} ${n === 1 ? una : varias}`;
+const busquedasHechas = (pagas, libres) =>
+  `${cuantas(pagas, "búsqueda web", "búsquedas web")}${libres ? ` y ${libres} de papers y libros` : ""}`;
+
 const esLibre = (destino) => destino === "academico" || destino === "libros";
 const claseDe = (destino) => (esLibre(destino) ? "libres" : destino === "sitios" ? "sitios" : "web");
 
@@ -620,7 +624,10 @@ export function crearInvestigador({
     alEsperar: (segundos) => emitir("espera", { segundos }),
   });
 
-  async function investigar(conversacion, flujo) {
+  // Con `retomar`, sigue una investigación cortada (reinicio del servidor, error) desde lo último
+  // guardado: no vuelve a planificar ni repite búsquedas; si ya había terminado de buscar, solo
+  // redacta de nuevo.
+  async function investigar(conversacion, flujo, { retomar = false } = {}) {
     const contexto = contextoDe(flujo);
     const { emitir } = contexto;
     const cupo = () => opciones.maxFuentes - conversacion.fuentes.length;
@@ -635,7 +642,18 @@ export function crearInvestigador({
     // Cada presupuesto termina por su lado: al llegar a su tope o, pasado su mínimo, cuando sus
     // últimas N búsquedas seguidas no aportaron ninguna fuente (las que solo trajeron páginas sin
     // acceso sí cuentan como aporte). El «ya alcanza» del modelo no corta nada.
-    const sinAporte = { pagas: 0, libres: 0 };
+    // Lo que hace falta para retomar la búsqueda: se guarda con la investigación.
+    const progreso = (conversacion.progreso ??= {
+      planificada: false,
+      buscada: false,
+      ronda: 0,
+      rondasVacias: 0,
+      tandasLibresVacias: 0,
+      sinAporte: { pagas: 0, libres: 0 },
+      terminados: [],
+    });
+    const { sinAporte } = progreso;
+    const retomando = retomar && progreso.planificada;
     const finDe = (libres) => {
       const { destinos } = conversacion;
       const clave = libres ? "libres" : "pagas";
@@ -711,7 +729,6 @@ export function crearInvestigador({
       (Array.isArray(lista) ? lista : [])
         .filter((texto) => typeof texto === "string" && texto.trim())
         .map((texto) => texto.trim().slice(0, 200));
-    let tandasLibresVacias = 0;
     const AVISOS_DE_FIN = {
       pagas: {
         tope: () => `Se usaron las ${hechas(false)} búsquedas web previstas`,
@@ -725,13 +742,12 @@ export function crearInvestigador({
           `Las últimas ${opciones.busquedasSinAporte} búsquedas de papers y libros no aportaron información nueva (van ${hechas(true)})`,
       },
     };
-    const terminados = new Set();
     // Avisa una vez cuando un presupuesto termina; si el otro sigue, la investigación continúa.
     const avisarFines = () => {
       for (const [clave, libres] of [["pagas", false], ["libres", true]]) {
         const motivoDeFin = finDe(libres);
-        if (!motivoDeFin || terminados.has(clave)) continue;
-        terminados.add(clave);
+        if (!motivoDeFin || progreso.terminados.includes(clave)) continue;
+        progreso.terminados.push(clave);
         const texto = AVISOS_DE_FIN[clave][motivoDeFin]?.();
         if (!texto) continue;
         const otro = libres ? finDe(false) : finDe(true);
@@ -760,10 +776,12 @@ export function crearInvestigador({
           texto: "Los sitios indicados ya no traen resultados nuevos: sigo buscando en toda la web.",
         });
       }
-      if (tanda.libres.length) tandasLibresVacias = sinNuevas("libres") ? tandasLibresVacias + 1 : 0;
-      if (tandasLibresVacias >= 2 && !destinos.libresAgotados) {
+      if (tanda.libres.length) {
+        progreso.tandasLibresVacias = sinNuevas("libres") ? progreso.tandasLibresVacias + 1 : 0;
+      }
+      if (progreso.tandasLibresVacias >= 2 && !destinos.libresAgotados) {
         destinos.libresAgotados = true;
-        terminados.add("libres");
+        progreso.terminados.push("libres");
         emitir("aviso", {
           texto: finDe(false)
             ? "Papers y libros ya no traen resultados nuevos."
@@ -773,133 +791,148 @@ export function crearInvestigador({
       avisarFines();
     };
 
-    emitir("etapa", { texto: "Planificando la investigación" });
-    conversacion.destinos = destinosDe(conversacion.tema);
-    // El saldo de OpenAlex se consulta antes del plan: si hoy no queda, no se piden papers.
+    // El saldo de OpenAlex se consulta antes del plan: si hoy no queda, no se piden papers. Al
+    // retomar, lo ya hecho cuenta para el tope y el saldo de hoy limita lo que falta.
     const saldo = saldoAcademico ? await saldoAcademico().catch(() => null) : null;
-    if (saldo) maxLibres = Math.min(maxLibres, saldo.busquedas);
-    let inicial = { web: [], sitios: [], libres: [], descartadas: [] };
-    // Lo que se pidió buscar en OpenAlex, aunque hoy no haya saldo (para avisarlo).
-    let pedidos = {};
-    const iniciales = [
-      opciones.consultasIniciales,
-      opciones.academicasIniciales ?? opciones.consultasIniciales,
-    ];
-    try {
-      const previstos = cuposDe(...iniciales);
-      const plan = await llm.completarJSON(
-        promptPlan(conversacion.tema, previstos.web + previstos.sitios, {
-          multilingue: opciones.multilingue,
-          libres: maxLibres > 0 ? iniciales[1] : 0,
-        }),
-        contexto,
-      );
-      conversacion.destinos = destinosDe(conversacion.tema, plan.sitios);
-      if (plan.academico === true) conversacion.destinos.academico = true;
-      if (plan.libros === true) conversacion.destinos.libros = true;
-      pedidos = { academico: conversacion.destinos.academico, libros: conversacion.destinos.libros };
-      // Sin saldo, las consultas pensadas para papers o libros se hacen en la web.
-      if (maxLibres <= 0) Object.assign(conversacion.destinos, { academico: false, libros: false });
-      // Las subpreguntas ordenan la investigación: cada fuente dice cuáles responde y cada ronda
-      // busca lo que falta de las menos cubiertas.
-      conversacion.aspectos = textos(plan.aspectos).slice(0, 12);
-      if (conversacion.aspectos.length) emitir("aspectos", { lista: conversacion.aspectos });
-      const todas = consultasDe([...(plan.consultas ?? []), ...(plan.dirigidas ?? [])]);
-      if (opciones.multilingue) conversacion.idiomas = idiomasDe(plan.idiomas, todas);
-      inicial = repartir(plan, cuposDe(...iniciales));
-    } catch (error) {
-      if (!(error instanceof ErrorFormato)) throw error;
-    }
-    if (!cantidadDe(inicial)) inicial.web = [{ texto: conversacion.tema }];
-
-    const idiomas =
-      conversacion.idiomas?.length > 1 ? ` en ${nombresDe(conversacion.idiomas)}` : "";
-    emitir("etapa", { texto: `Buscando y leyendo fuentes${idiomas}` });
-    const { destinos } = conversacion;
-    if (destinos.dominios.length) {
-      emitir("aviso", { texto: `La mitad de las búsquedas web va a: ${destinos.dominios.join(", ")}.` });
-    }
-    if (pedidos.academico || pedidos.libros) {
-      const donde = [
-        pedidos.academico && "artículos académicos (OpenAlex, en lugar de Google Scholar)",
-        pedidos.libros && "libros",
-      ]
-        .filter(Boolean)
-        .join(" y ");
-      const horas = saldo?.renuevaEnSegundos ? Math.max(1, Math.round(saldo.renuevaEnSegundos / 3600)) : null;
+    if (saldo) maxLibres = Math.min(maxLibres, hechas(true) + saldo.busquedas);
+    if (retomando) {
+      const hecho = busquedasHechas(hechas(false), hechas(true));
+      const leidas = cuantas(conversacion.fuentes.length, "fuente leída", "fuentes leídas");
       emitir("aviso", {
-        texto:
-          maxLibres > 0
-            ? `Además busco ${donde}: hasta ${Number.isFinite(maxLibres) ? `${maxLibres} búsquedas` : "las búsquedas que hagan falta"}, aparte de las de la web${saldo ? ` (hoy quedan ${saldo.busquedas} en OpenAlex)` : ""}.`
-            : `Hoy no quedan búsquedas de papers ni de libros en OpenAlex${horas ? ` (se renuevan en unas ${horas} h)` : ""}: esta investigación usa solo la web.`,
+        texto: progreso.buscada
+          ? `Retomo la investigación: las búsquedas ya estaban terminadas (${hecho}); vuelvo a redactar el informe (${leidas}).`
+          : `Retomo la investigación desde lo último guardado: ${hecho} y ${leidas}.`,
       });
-    }
-    await buscarTanda(inicial);
+    } else {
+      emitir("etapa", { texto: "Planificando la investigación" });
+      conversacion.destinos = destinosDe(conversacion.tema);
+      let inicial = { web: [], sitios: [], libres: [], descartadas: [] };
+      // Lo que se pidió buscar en OpenAlex, aunque hoy no haya saldo (para avisarlo).
+      let pedidos = {};
+      const iniciales = [
+        opciones.consultasIniciales,
+        opciones.academicasIniciales ?? opciones.consultasIniciales,
+      ];
+      try {
+        const previstos = cuposDe(...iniciales);
+        const plan = await llm.completarJSON(
+          promptPlan(conversacion.tema, previstos.web + previstos.sitios, {
+            multilingue: opciones.multilingue,
+            libres: maxLibres > 0 ? iniciales[1] : 0,
+          }),
+          contexto,
+        );
+        conversacion.destinos = destinosDe(conversacion.tema, plan.sitios);
+        if (plan.academico === true) conversacion.destinos.academico = true;
+        if (plan.libros === true) conversacion.destinos.libros = true;
+        pedidos = { academico: conversacion.destinos.academico, libros: conversacion.destinos.libros };
+        // Sin saldo, las consultas pensadas para papers o libros se hacen en la web.
+        if (maxLibres <= 0) Object.assign(conversacion.destinos, { academico: false, libros: false });
+        // Las subpreguntas ordenan la investigación: cada fuente dice cuáles responde y cada ronda
+        // busca lo que falta de las menos cubiertas.
+        conversacion.aspectos = textos(plan.aspectos).slice(0, 12);
+        if (conversacion.aspectos.length) emitir("aspectos", { lista: conversacion.aspectos });
+        const todas = consultasDe([...(plan.consultas ?? []), ...(plan.dirigidas ?? [])]);
+        if (opciones.multilingue) conversacion.idiomas = idiomasDe(plan.idiomas, todas);
+        inicial = repartir(plan, cuposDe(...iniciales));
+      } catch (error) {
+        if (!(error instanceof ErrorFormato)) throw error;
+      }
+      if (!cantidadDe(inicial)) inicial.web = [{ texto: conversacion.tema }];
 
-    // Por qué terminó la búsqueda, para avisarlo.
-    let motivo = "rondas";
-    let rondasVacias = 0;
-    for (let ronda = 1; ronda <= opciones.rondasExtra && cupo() > 0; ronda++) {
-      if (!conversacion.fuentes.length) break;
-      const cupos = cuposDe(
-        opciones.consultasPorRonda,
-        opciones.academicasPorRonda ?? opciones.consultasPorRonda,
-      );
-      if (!sumaDe(cupos)) {
-        motivo = "presupuesto";
-        break;
+      const idiomas =
+        conversacion.idiomas?.length > 1 ? ` en ${nombresDe(conversacion.idiomas)}` : "";
+      emitir("etapa", { texto: `Buscando y leyendo fuentes${idiomas}` });
+      const { destinos } = conversacion;
+      if (destinos.dominios.length) {
+        emitir("aviso", { texto: `La mitad de las búsquedas web va a: ${destinos.dominios.join(", ")}.` });
       }
-      emitir("etapa", { texto: "Revisando qué falta cubrir" });
-      let tanda = null;
-      // Se le pide al modelo que llene el cupo; si el filtro de repetidas (o el modelo) deja la
-      // ronda por debajo de 3/4, se le pide el resto mostrándole qué se descartó.
-      for (let intento = 0; intento < 2; intento++) {
-        if (tanda && cantidadDe(tanda) >= (sumaDe(cupos) * 3) / 4) break;
-        const faltan = tanda
-          ? {
-              web: cupos.web - tanda.web.length,
-              sitios: cupos.sitios - tanda.sitios.length,
-              libres: cupos.libres - tanda.libres.length,
-            }
-          : cupos;
-        try {
-          const revision = await llm.completarJSON(
-            promptRevision(conversacion, faltan, { descartadas: tanda?.descartadas ?? [] }),
-            contexto,
-          );
-          tanda = repartir(revision, cupos, tanda);
-          const nuevos = intento === 0 ? textos(revision.aspectos_nuevos).slice(0, 2) : [];
-          if (conversacion.aspectos?.length && nuevos.length) {
-            const sumados = nuevos.slice(0, MAX_ASPECTOS - conversacion.aspectos.length);
-            conversacion.aspectos.push(...sumados);
-            if (sumados.length) emitir("aspectos", { lista: sumados, nuevos: true });
-          }
-        } catch (error) {
-          if (!(error instanceof ErrorFormato)) throw error;
-        }
+      if (pedidos.academico || pedidos.libros) {
+        const donde = [
+          pedidos.academico && "artículos académicos (OpenAlex, en lugar de Google Scholar)",
+          pedidos.libros && "libros",
+        ]
+          .filter(Boolean)
+          .join(" y ");
+        const horas = saldo?.renuevaEnSegundos ? Math.max(1, Math.round(saldo.renuevaEnSegundos / 3600)) : null;
+        emitir("aviso", {
+          texto:
+            maxLibres > 0
+              ? `Además busco ${donde}: hasta ${Number.isFinite(maxLibres) ? `${maxLibres} búsquedas` : "las búsquedas que hagan falta"}, aparte de las de la web${saldo ? ` (hoy quedan ${saldo.busquedas} en OpenAlex)` : ""}.`
+              : `Hoy no quedan búsquedas de papers ni de libros en OpenAlex${horas ? ` (se renuevan en unas ${horas} h)` : ""}: esta investigación usa solo la web.`,
+        });
       }
-      if (!tanda || !cantidadDe(tanda)) {
-        if (++rondasVacias >= 2) {
-          motivo = "sin-novedades";
+      progreso.planificada = true;
+      await buscarTanda(inicial);
+    }
+
+    if (!progreso.buscada) {
+      // Por qué terminó la búsqueda, para avisarlo.
+      let motivo = "rondas";
+      for (let ronda = progreso.ronda + 1; ronda <= opciones.rondasExtra && cupo() > 0; ronda++) {
+        progreso.ronda = ronda;
+        if (!conversacion.fuentes.length) break;
+        const cupos = cuposDe(
+          opciones.consultasPorRonda,
+          opciones.academicasPorRonda ?? opciones.consultasPorRonda,
+        );
+        if (!sumaDe(cupos)) {
+          motivo = "presupuesto";
           break;
         }
-        continue;
+        emitir("etapa", { texto: "Revisando qué falta cubrir" });
+        let tanda = null;
+        // Se le pide al modelo que llene el cupo; si el filtro de repetidas (o el modelo) deja la
+        // ronda por debajo de 3/4, se le pide el resto mostrándole qué se descartó.
+        for (let intento = 0; intento < 2; intento++) {
+          if (tanda && cantidadDe(tanda) >= (sumaDe(cupos) * 3) / 4) break;
+          const faltan = tanda
+            ? {
+                web: cupos.web - tanda.web.length,
+                sitios: cupos.sitios - tanda.sitios.length,
+                libres: cupos.libres - tanda.libres.length,
+              }
+            : cupos;
+          try {
+            const revision = await llm.completarJSON(
+              promptRevision(conversacion, faltan, { descartadas: tanda?.descartadas ?? [] }),
+              contexto,
+            );
+            tanda = repartir(revision, cupos, tanda);
+            const nuevos = intento === 0 ? textos(revision.aspectos_nuevos).slice(0, 2) : [];
+            if (conversacion.aspectos?.length && nuevos.length) {
+              const sumados = nuevos.slice(0, MAX_ASPECTOS - conversacion.aspectos.length);
+              conversacion.aspectos.push(...sumados);
+              if (sumados.length) emitir("aspectos", { lista: sumados, nuevos: true });
+            }
+          } catch (error) {
+            if (!(error instanceof ErrorFormato)) throw error;
+          }
+        }
+        if (!tanda || !cantidadDe(tanda)) {
+          if (++progreso.rondasVacias >= 2) {
+            motivo = "sin-novedades";
+            break;
+          }
+          continue;
+        }
+        progreso.rondasVacias = 0;
+        emitir("etapa", { texto: `Profundizando (ronda ${ronda + 1})` });
+        await buscarTanda(tanda);
       }
-      rondasVacias = 0;
-      emitir("etapa", { texto: `Profundizando (ronda ${ronda + 1})` });
-      await buscarTanda(tanda);
-    }
 
-    const total = `${hechas(false)} búsquedas web${hechas(true) ? ` y ${hechas(true)} de papers y libros` : ""}`;
-    const avisoFinal = {
-      presupuesto: `Búsqueda terminada (${total}): redacto con lo encontrado.`,
-      rondas:
-        opciones.rondasExtra > 0
-          ? `Se llegó al máximo de ${opciones.rondasExtra} rondas (${total}): redacto con lo encontrado.`
-          : null,
-      "sin-novedades": `El modelo ya no propone búsquedas distintas de las que se hicieron (${total}): redacto con lo encontrado.`,
-    }[motivo];
-    if (avisoFinal && conversacion.fuentes.length) emitir("aviso", { texto: avisoFinal });
+      const total = busquedasHechas(hechas(false), hechas(true));
+      const avisoFinal = {
+        presupuesto: `Búsqueda terminada (${total}): redacto con lo encontrado.`,
+        rondas:
+          opciones.rondasExtra > 0
+            ? `Se llegó al máximo de ${opciones.rondasExtra} rondas (${total}): redacto con lo encontrado.`
+            : null,
+        "sin-novedades": `El modelo ya no propone búsquedas distintas de las que se hicieron (${total}): redacto con lo encontrado.`,
+      }[motivo];
+      if (avisoFinal && conversacion.fuentes.length) emitir("aviso", { texto: avisoFinal });
+      progreso.buscada = true;
+    }
 
     if (!conversacion.fuentes.length) {
       throw (
