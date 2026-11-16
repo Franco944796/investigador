@@ -494,6 +494,11 @@ function procesar({ tipo, datos }) {
     }
     if (TERMINALES.has(tipo)) {
       estado.ocupada = false;
+      // En vivo, «cancelada» y «error» dicen si se puede retomar; al conectar lo dice «listo».
+      if (estado.enVivo && datos.retomable) {
+        estado.retomable = true;
+        estado.vista?.ofrecerRetomar(retomar);
+      }
       // Solo los finales en vivo cambian el estado en la lista; los repetidos al conectar, no.
       if (estado.enVivo) cargarHistorial();
     }
@@ -662,7 +667,7 @@ $("#redactor").addEventListener("submit", async (evento) => {
   evento.preventDefault();
   mostrarAviso("");
   if (estado.ocupada) {
-    if (!confirm("¿Detener la investigación? Lo avanzado hasta ahora se pierde.")) return;
+    if (!confirm("¿Detener la investigación? Lo avanzado queda guardado y después podés retomarla.")) return;
     try {
       await pedir(`/api/conversaciones/${estado.conversacion}/cancelar`, { metodo: "POST" });
     } catch (error) {

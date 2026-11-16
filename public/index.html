@@ -7,7 +7,7 @@
     <meta name="theme-color" content="#0e1014" />
     <meta name="api" content="" />
     <title>Investigador</title>
-    <link rel="icon" href="data:," />
+    <link rel="icon" href="logo.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="estilos.css" />
   </head>
   <body>
@@ -28,7 +28,7 @@
     <div id="app" class="app" hidden>
       <aside id="panel" class="panel" aria-label="Tus investigaciones">
         <div class="panel-cabeza">
-          <strong class="marca">Investigador</strong>
+          <strong class="marca"><img src="logo.svg" alt="" width="24" height="24" />Investigador</strong>
           <button
             id="cerrar-panel"
             type="button"
@@ -74,7 +74,7 @@
       <div class="columna">
         <header class="barra">
           <button type="button" class="icono accion-abrir" aria-label="Abrir el panel"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" /></svg></button>
-          <strong class="marca">Investigador</strong>
+          <strong class="marca"><img src="logo.svg" alt="" width="24" height="24" />Investigador</strong>
           <button type="button" class="icono accion-nueva" aria-label="Nueva investigación"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg></button>
         </header>
 
@@ -82,11 +82,9 @@
           <div id="vacio" class="vacio">
             <h1>¿Qué querés investigar?</h1>
             <p>
-              Hago una investigación exhaustiva: hasta 100 búsquedas en la web en español, inglés,
+              Hago una investigación exhaustiva: búsquedas en la web en español, inglés,
               chino y otros idiomas según el tema, más papers y libros cuando hacen falta; leo las
               fuentes y te entrego un informe con citas.
-              Puede tardar horas: podés cerrar la página y lo encontrás en tu historial, con el
-              informe en PDF.
             </p>
             <p id="saldos" class="saldos" hidden></p>
 

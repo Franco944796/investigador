@@ -218,7 +218,15 @@ textarea {
 }
 
 .marca {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   font-size: 1.05rem;
+}
+
+.marca img {
+  flex: none;
+  border-radius: 6px;
 }
 
 .nueva {

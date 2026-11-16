@@ -360,3 +360,36 @@ test("retomar: una interrumpida se ofrece para retomar, sigue en el mismo turno 
   assert.equal(lista[0].estado, "lista");
   assert.equal((await ana.pedir("/api/conversaciones/cortada/retomar", { metodo: "POST" })).status, 409);
 });
+
+test("retomar: una detenida a mano también se puede retomar", async () => {
+  // Modelo propio: el compartido ya gastó en otras pruebas la revisión que propone consultas.
+  const propio = await iniciarLLMSimulado();
+  after(() => propio.cerrar());
+  const levantado = await levantar({
+    acceso: crearAcceso("ana:codigo-de-ana:0"),
+    almacen: crearAlmacenMemoria(),
+    urlLLM: propio.urlBase,
+    entorno: ENTORNO,
+    demoraLectorMs: 400,
+  });
+  cerrar.push(levantado.servidor);
+  const ana = cliente(levantado.base);
+  await ana.entrar("codigo-de-ana");
+  const { conversacion } = await (await ana.investigar("Tema a detener")).json();
+  // Se detiene mientras lee las primeras fuentes (el plan ya está hecho).
+  for (let i = 0; i < 50; i++) {
+    const { eventos } = await ana.eventos(conversacion, { hastaListo: true });
+    if (eventos.some((e) => e.tipo === "fuente")) break;
+    await new Promise((listo) => setTimeout(listo, 100));
+  }
+  await ana.pedir(`/api/conversaciones/${conversacion}/cancelar`, { metodo: "POST" });
+  const detenida = (await ana.eventos(conversacion)).eventos;
+  assert.equal(detenida.at(-1).tipo, "cancelada");
+  const listo = (await ana.eventos(conversacion, { hastaListo: true })).eventos.at(-1);
+  assert.deepEqual(listo, { tipo: "listo", datos: { ocupada: false, retomable: true } });
+
+  assert.equal((await ana.pedir(`/api/conversaciones/${conversacion}/retomar`, { metodo: "POST" })).status, 202);
+  const final = (await ana.eventos(conversacion, { terminales: 2 })).eventos;
+  assert.ok(final.some((e) => e.tipo === "retomada"));
+  assert.equal(final.at(-1).tipo, "fin");
+});

@@ -15,12 +15,13 @@ const GUARDADO_MS = 120000;
 const RETENER_EN_MEMORIA_MS = 10 * 60 * 1000;
 const ESTADO_FINAL = { completa: "lista", fallida: "fallida", cancelada: "cancelada" };
 
-// Se retoma una investigación que se cortó (reinicio del servidor) o falló, antes de terminar el
-// informe. Las guardadas antes de que existiera `progreso` no tienen con qué retomarse.
+// Se retoma una investigación que se cortó (reinicio del servidor), falló o se detuvo a mano,
+// antes de terminar el informe. Las guardadas antes de que existiera `progreso` no tienen con qué
+// retomarse.
 const retomable = (conversacion) =>
   !conversacion.ocupada &&
   !conversacion.informe &&
-  ["interrumpida", "fallida"].includes(conversacion.estado) &&
+  ["interrumpida", "fallida", "cancelada"].includes(conversacion.estado) &&
   Boolean(conversacion.progreso);
 
 // Las fuentes que se estaban leyendo cuando se cortó: se dan por perdidas y su dirección se libera
@@ -272,6 +273,7 @@ export function crearApp({ config, acceso, investigador, almacen, generarPDF, sa
 
     return (async () => {
       let resultado = "completa";
+      let fallo = null;
       try {
         await conTurno(
           () => {
@@ -285,16 +287,20 @@ export function crearApp({ config, acceso, investigador, almacen, generarPDF, sa
         );
       } catch (error) {
         resultado = control.signal.aborted ? "cancelada" : "fallida";
-        if (resultado === "fallida") {
-          console.error(error);
-          flujo.emitir("error", { mensaje: mensajeDeError(error), hora: Date.now() });
-        } else {
-          flujo.emitir("cancelada", { hora: Date.now() });
-        }
+        fallo = error;
+        if (resultado === "fallida") console.error(error);
       }
       Object.assign(conversacion, { control: null, ocupada: false });
+      if (esInvestigacion) conversacion.estado = ESTADO_FINAL[resultado];
+      // Con el estado ya final, el aviso dice si se puede retomar: la página muestra el botón al
+      // momento, sin esperar a reconectarse.
+      const retomar = { retomable: retomable(conversacion) };
+      if (resultado === "fallida") {
+        flujo.emitir("error", { mensaje: mensajeDeError(fallo), hora: Date.now(), ...retomar });
+      } else if (resultado === "cancelada") {
+        flujo.emitir("cancelada", { hora: Date.now(), ...retomar });
+      }
       if (esInvestigacion) {
-        conversacion.estado = ESTADO_FINAL[resultado];
         // Lo cancelado no se devuelve: cortar a mitad de camino ya gastó cuota de los proveedores.
         if (resultado === "fallida" && !retomada) acceso.registrarUso(persona, -1);
       }

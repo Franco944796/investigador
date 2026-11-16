@@ -18,7 +18,7 @@
     "dompurify": "^3.4.17",
     "express": "^5.3.0",
     "fontkit": "^2.0.4",
-    "katex": "^0.16.47",
+    "katex": "^0.19.1",
     "linkedom": "^0.18.15",
     "marked": "^18.2.0",
     "mathjax-full": "^3.2.1",

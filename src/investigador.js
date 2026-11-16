@@ -871,7 +871,9 @@ export function crearInvestigador({
       let motivo = "rondas";
       for (let ronda = progreso.ronda + 1; ronda <= opciones.rondasExtra && cupo() > 0; ronda++) {
         progreso.ronda = ronda;
-        if (!conversacion.fuentes.length) break;
+        // Sin fuentes tras la primera tanda no hay de dónde seguir; al retomar, en cambio, la
+        // primera tanda pudo cortarse antes de leer nada, y se sigue con las rondas.
+        if (!conversacion.fuentes.length && !retomando) break;
         const cupos = cuposDe(
           opciones.consultasPorRonda,
           opciones.academicasPorRonda ?? opciones.consultasPorRonda,
