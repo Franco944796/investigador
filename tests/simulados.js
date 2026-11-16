@@ -71,6 +71,12 @@ function responder(cuerpo, estado) {
   }
   if (ultimo.includes("comienzo del informe")) return "# Informe de prueba\n\n## Resumen\n\nResumen breve [1].";
   if (ultimo.includes("cierre del informe")) return "## Conclusiones\n\n- Punto **importante** [2].";
+  if (ultimo.includes("La investigación sigue")) {
+    estado.revisiones++;
+    return estado.revisiones === 1
+      ? '{"consultas": ["consulta extra"]}'
+      : '{"consultas": []}';
+  }
   if (ultimo.includes('{"consultas": [')) {
     return '```json\n{"consultas": ["primera consulta", "segunda consulta"]}\n```';
   }
@@ -79,12 +85,6 @@ function responder(cuerpo, estado) {
     return ultimo.includes("/irrelevante")
       ? "IRRELEVANTE"
       : "Fecha: 2025-03\nTipo: oficial\nAspectos: 2\nNotas: la página aporta el dato 10 y el dato 20.";
-  }
-  if (ultimo.includes('"completo"')) {
-    estado.revisiones++;
-    return estado.revisiones === 1
-      ? '{"completo": false, "consultas": ["consulta extra"]}'
-      : '{"completo": true, "consultas": []}';
   }
   if (ultimo.includes('"buscar"')) return '{"buscar": true, "consultas": ["consulta de seguimiento"]}';
   return "";

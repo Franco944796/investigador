@@ -242,8 +242,11 @@ export function destinosDe(tema, sugeridos = []) {
   };
 }
 
-const activos = ({ academico, dominios, libros }) =>
-  [academico && "academico", dominios.length && "sitios", libros && "libros"].filter(Boolean);
+// Los sitios que ya no traen páginas nuevas dejan de recibir dirigidas: su cupo es 0 y se perdían.
+const activos = ({ academico, dominios, libros, sitiosAgotados }) =>
+  [academico && "academico", dominios.length && !sitiosAgotados && "sitios", libros && "libros"].filter(
+    Boolean,
+  );
 
 // Cada consulta dirigida va a donde el modelo la pensó (papers, libros o sitios). Solo si no lo
 // dijo, o eligió un destino que no está activo, se reparten por turno: repartir todas por turno
@@ -385,7 +388,6 @@ export function crearConversacion(id, dueno, tema) {
     vistas: new Set(),
     consultas: [],
     candidatas: 0,
-    irrelevantesSeguidas: 0,
     ultimoFallo: null,
     informe: "",
     intercambios: [],
@@ -424,7 +426,8 @@ export function crearInvestigador({
     }
   }
 
-  // Devuelve true si la fuente se leyó y aporta.
+  // Devuelve "util" si la fuente se leyó y aporta, "sin-acceso" si trata el tema detrás de un muro
+  // (cuenta como aporte de su búsqueda: hay información, aunque no se pueda leer) o null.
   async function analizar(conversacion, candidata, { emitir, signal, alEsperar }) {
     const id = ++conversacion.candidatas;
     emitir("fuente", {
@@ -455,12 +458,8 @@ export function crearInvestigador({
       const { notas, aspectos, fecha, tipo } = interpretarNotas(respuesta ?? "");
       // Trata el tema pero solo se ve una ficha o un muro de pago: no cuenta como irrelevante.
       if (/^\W*SIN ACCESO\W*$/i.test(notas)) throw new Error(SIN_ACCESO);
-      if (!notas || /^\W*IRRELEVANTE\W*$/i.test(notas)) {
-        conversacion.irrelevantesSeguidas++;
-        throw new Error(NO_APORTA);
-      }
+      if (!notas || /^\W*IRRELEVANTE\W*$/i.test(notas)) throw new Error(NO_APORTA);
 
-      conversacion.irrelevantesSeguidas = 0;
       const fuente = { n: conversacion.fuentes.length + 1, url: candidata.url, titulo, notas };
       // Lo que ya dice el buscador (un paper y su año) vale más que lo que deduce el modelo.
       const datos = { tipo: candidata.tipo ?? tipo, fecha: candidata.fecha ?? fecha };
@@ -471,7 +470,7 @@ export function crearInvestigador({
       if (candidata.imagenes?.length) fuente.imagenes = candidata.imagenes;
       conversacion.fuentes.push(fuente);
       emitir("fuente", { id, url: fuente.url, titulo, estado: "lista", n: fuente.n, ...datos });
-      return true;
+      return "util";
     } catch (error) {
       if (signal.aborted) throw error;
       // Todo lo que no se descartó por tratar otro tema (sin acceso, bloqueada, PDF, error al
@@ -485,14 +484,9 @@ export function crearInvestigador({
         });
       }
       emitir("fuente", { id, estado: "descartada", motivo: error.message, ...(revisar && { revisar }) });
-      return false;
+      return error.message === SIN_ACCESO ? "sin-acceso" : null;
     }
   }
-
-  // Si las últimas fuentes no aportan nada, seguir buscando solo gasta tiempo y cuota.
-  const agotada = (conversacion) =>
-    opciones.irrelevantesSeguidas > 0 &&
-    conversacion.irrelevantesSeguidas >= opciones.irrelevantesSeguidas;
 
   // Devuelve los resultados de una búsqueda, o null si falló. Un buscador que falla se avisa una
   // vez (antes parecía «sin resultados») y esa búsqueda se hace en la web para no perderla.
@@ -552,7 +546,7 @@ export function crearInvestigador({
       // El número permite que la página cuelgue cada fuente de la búsqueda que la trajo.
       const numero = conversacion.consultas.push(texto);
       numeros[indice] = numero;
-      const registro = { texto, destino: destino ?? "web", idioma, nuevas: 0, leidas: 0 };
+      const registro = { texto, destino: destino ?? "web", idioma, nuevas: 0, leidas: 0, sinAcceso: 0 };
       conversacion.rendimiento[numero - 1] = registro;
       emitir("consulta", { id: numero, texto, ...(idioma && { idioma }), ...(destino && { destino }) });
       const resultados = await buscarUna(conversacion, consulta, contexto);
@@ -577,10 +571,10 @@ export function crearInvestigador({
       }
     }
     await enParalelo(candidatas, opciones.tareasEnParalelo, async (candidata) => {
-      if (agotada(conversacion)) return;
-      if (await analizar(conversacion, candidata, contexto)) {
-        conversacion.rendimiento[candidata.consulta - 1].leidas++;
-      }
+      const resultado = await analizar(conversacion, candidata, contexto);
+      const registro = conversacion.rendimiento[candidata.consulta - 1];
+      if (resultado === "util") registro.leidas++;
+      if (resultado === "sin-acceso") registro.sinAcceso++;
     });
     return numeros.map((numero) => conversacion.rendimiento[numero - 1]);
   }
@@ -603,23 +597,39 @@ export function crearInvestigador({
       ).length;
     const maxPagas = opciones.maxBusquedas ?? Infinity;
     let maxLibres = opciones.maxAcademicas ?? Infinity;
+    // Cada presupuesto termina por su lado: al llegar a su tope o, pasado su mínimo, cuando sus
+    // últimas N búsquedas seguidas no aportaron ninguna fuente (las que solo trajeron páginas sin
+    // acceso sí cuentan como aporte). El «ya alcanza» del modelo no corta nada.
+    const sinAporte = { pagas: 0, libres: 0 };
+    const finDe = (libres) => {
+      const { destinos } = conversacion;
+      const clave = libres ? "libres" : "pagas";
+      const maximo = libres ? maxLibres : maxPagas;
+      const minimo = libres ? (opciones.minAcademicas ?? maximo) : (opciones.minBusquedas ?? 0);
+      if (libres && !(destinos.academico || destinos.libros)) return "no-pedidas";
+      if (libres && destinos.libresAgotados) return "sin-resultados";
+      if (hechas(libres) >= maximo) return libres && maximo < (opciones.maxAcademicas ?? Infinity) ? "saldo" : "tope";
+      const limite = opciones.busquedasSinAporte ?? 0;
+      if (limite > 0 && hechas(libres) >= minimo && sinAporte[clave] >= limite) return "sin-aporte";
+      return null;
+    };
     const cuposDe = (pagas, libres) => {
       const { destinos } = conversacion;
-      const quedan = Math.max(0, Math.min(pagas, maxPagas - hechas(false)));
+      const quedan = finDe(false) ? 0 : Math.max(0, Math.min(pagas, maxPagas - hechas(false)));
       // La mitad de las búsquedas pagas va a los sitios pedidos mientras traigan páginas nuevas.
       const sitios =
         destinos.dominios.length && !destinos.sitiosAgotados ? Math.floor(quedan / 2) : 0;
-      const conLibres = (destinos.academico || destinos.libros) && !destinos.libresAgotados;
       return {
         web: quedan - sitios,
         sitios,
-        libres: conLibres ? Math.max(0, Math.min(libres, maxLibres - hechas(true))) : 0,
+        libres: finDe(true) ? 0 : Math.max(0, Math.min(libres, maxLibres - hechas(true))),
       };
     };
     const aniosDelPedido = new Set((conversacion.tema.match(/\b(19|20)\d\d\b/g) ?? []).map(Number));
     // Resuelve el destino de cada consulta propuesta, descarta las casi iguales a una ya hecha en
-    // el mismo buscador (o entre sí) y reparte el resto entre los cupos.
-    const repartir = (propuesta, cupos) => {
+    // el mismo buscador (o entre sí) y reparte el resto entre los cupos. `previa` es lo ya elegido
+    // en esta ronda, cuando se le pide al modelo que complete el cupo.
+    const repartir = (propuesta, cupos, previa = null) => {
       const candidatas = [
         ...consultasDe(propuesta.consultas, aniosDelPedido).map((consulta) =>
           sinDestinoInactivo(consulta, conversacion.destinos),
@@ -628,7 +638,12 @@ export function crearInvestigador({
       ];
       const sinDirigidas = !consultasDe(propuesta.dirigidas).length;
       const previas = (conversacion.rendimiento ?? []).filter(Boolean);
-      const tanda = { web: [], sitios: [], libres: [], descartadas: [] };
+      const tanda = {
+        web: [...(previa?.web ?? [])],
+        sitios: [...(previa?.sitios ?? [])],
+        libres: [...(previa?.libres ?? [])],
+        descartadas: [...(previa?.descartadas ?? [])],
+      };
       const lugar = (consulta) => {
         const clase = claseDe(consulta.destino);
         return tanda[clase].length < cupos[clase] ? tanda[clase] : null;
@@ -644,6 +659,9 @@ export function crearInvestigador({
         }
         if (lugar(consulta)) {
           lugar(consulta).push(consulta);
+        } else if (!consulta.destino && tanda.sitios.length < cupos.sitios) {
+          // Una consulta web que sobra sirve igual dentro de los sitios pedidos: así se llena su cupo.
+          tanda.sitios.push({ ...consulta, destino: "sitios" });
         } else if (sinDirigidas && !consulta.destino) {
           // El modelo no separó las dirigidas: lo que sobra de la web va a un buscador dirigido.
           const [dirigida] = conDestino([consulta], conversacion);
@@ -653,14 +671,49 @@ export function crearInvestigador({
       return tanda;
     };
     const cantidadDe = (tanda) => tanda.web.length + tanda.sitios.length + tanda.libres.length;
+    const sumaDe = (cupos) => cupos.web + cupos.sitios + cupos.libres;
     const textos = (lista) =>
       (Array.isArray(lista) ? lista : [])
         .filter((texto) => typeof texto === "string" && texto.trim())
         .map((texto) => texto.trim().slice(0, 200));
     let tandasLibresVacias = 0;
+    const AVISOS_DE_FIN = {
+      pagas: {
+        tope: () => `Se usaron las ${hechas(false)} búsquedas web previstas`,
+        "sin-aporte": () =>
+          `Las últimas ${opciones.busquedasSinAporte} búsquedas web no aportaron información nueva (van ${hechas(false)})`,
+      },
+      libres: {
+        tope: () => `Se usaron las ${hechas(true)} búsquedas de papers y libros previstas`,
+        saldo: () => `Se usaron las ${hechas(true)} búsquedas de papers y libros que permitía el saldo de hoy de OpenAlex`,
+        "sin-aporte": () =>
+          `Las últimas ${opciones.busquedasSinAporte} búsquedas de papers y libros no aportaron información nueva (van ${hechas(true)})`,
+      },
+    };
+    const terminados = new Set();
+    // Avisa una vez cuando un presupuesto termina; si el otro sigue, la investigación continúa.
+    const avisarFines = () => {
+      for (const [clave, libres] of [["pagas", false], ["libres", true]]) {
+        const motivoDeFin = finDe(libres);
+        if (!motivoDeFin || terminados.has(clave)) continue;
+        terminados.add(clave);
+        const texto = AVISOS_DE_FIN[clave][motivoDeFin]?.();
+        if (!texto) continue;
+        const otro = libres ? finDe(false) : finDe(true);
+        emitir("aviso", {
+          texto: otro
+            ? `${texto}.`
+            : `${texto}: sigo solo con ${libres ? "la web" : "papers y libros"}.`,
+        });
+      }
+    };
     const buscarTanda = async (tanda) => {
       const consultas = [...tanda.web, ...tanda.sitios, ...tanda.libres];
       const registros = await incorporar(conversacion, consultas, contexto, cupo());
+      for (const registro of registros) {
+        const clave = esLibre(registro.destino) ? "libres" : "pagas";
+        sinAporte[clave] = registro.leidas || registro.sinAcceso ? 0 : sinAporte[clave] + 1;
+      }
       const sinNuevas = (clase) => {
         const suyos = registros.filter((registro) => claseDe(registro.destino) === clase);
         return suyos.length > 0 && suyos.every((registro) => !registro.nuevas);
@@ -675,12 +728,17 @@ export function crearInvestigador({
       if (tanda.libres.length) tandasLibresVacias = sinNuevas("libres") ? tandasLibresVacias + 1 : 0;
       if (tandasLibresVacias >= 2 && !destinos.libresAgotados) {
         destinos.libresAgotados = true;
-        emitir("aviso", { texto: "Papers y libros ya no traen resultados nuevos: sigo solo con la web." });
+        terminados.add("libres");
+        emitir("aviso", {
+          texto: finDe(false)
+            ? "Papers y libros ya no traen resultados nuevos."
+            : "Papers y libros ya no traen resultados nuevos: sigo solo con la web.",
+        });
       }
+      avisarFines();
     };
 
     emitir("etapa", { texto: "Planificando la investigación" });
-    conversacion.irrelevantesSeguidas = 0;
     conversacion.destinos = destinosDe(conversacion.tema);
     // El saldo de OpenAlex se consulta antes del plan: si hoy no queda, no se piden papers.
     const saldo = saldoAcademico ? await saldoAcademico().catch(() => null) : null;
@@ -748,36 +806,33 @@ export function crearInvestigador({
     let rondasVacias = 0;
     for (let ronda = 1; ronda <= opciones.rondasExtra && cupo() > 0; ronda++) {
       if (!conversacion.fuentes.length) break;
-      if (agotada(conversacion)) {
-        motivo = "irrelevantes";
-        break;
-      }
       const cupos = cuposDe(
         opciones.consultasPorRonda,
         opciones.academicasPorRonda ?? opciones.consultasPorRonda,
       );
-      if (!cupos.web && !cupos.sitios && !cupos.libres) {
+      if (!sumaDe(cupos)) {
         motivo = "presupuesto";
         break;
       }
       emitir("etapa", { texto: "Revisando qué falta cubrir" });
-      const exigir =
-        cupos.web + cupos.sitios > 0 && hechas(false) < Math.min(opciones.minBusquedas ?? 0, maxPagas);
-      let tanda = { web: [], sitios: [], libres: [], descartadas: [] };
-      let completo = false;
-      // Si el filtro de repetidas deja la ronda vacía, se le pide otra vez al modelo mostrándole
-      // qué se descartó: cortar ahí terminaba la investigación antes del mínimo de búsquedas.
-      for (let intento = 0; intento < 2 && !cantidadDe(tanda) && !completo; intento++) {
+      let tanda = null;
+      // Se le pide al modelo que llene el cupo; si el filtro de repetidas (o el modelo) deja la
+      // ronda por debajo de 3/4, se le pide el resto mostrándole qué se descartó.
+      for (let intento = 0; intento < 2; intento++) {
+        if (tanda && cantidadDe(tanda) >= (sumaDe(cupos) * 3) / 4) break;
+        const faltan = tanda
+          ? {
+              web: cupos.web - tanda.web.length,
+              sitios: cupos.sitios - tanda.sitios.length,
+              libres: cupos.libres - tanda.libres.length,
+            }
+          : cupos;
         try {
           const revision = await llm.completarJSON(
-            promptRevision(conversacion, cupos, { exigir, descartadas: tanda.descartadas }),
+            promptRevision(conversacion, faltan, { descartadas: tanda?.descartadas ?? [] }),
             contexto,
           );
-          if (!exigir && revision.completo === true) {
-            completo = true;
-            break;
-          }
-          tanda = repartir(revision, cupos);
+          tanda = repartir(revision, cupos, tanda);
           const nuevos = intento === 0 ? textos(revision.aspectos_nuevos).slice(0, 2) : [];
           if (conversacion.aspectos?.length && nuevos.length) {
             const sumados = nuevos.slice(0, MAX_ASPECTOS - conversacion.aspectos.length);
@@ -788,11 +843,7 @@ export function crearInvestigador({
           if (!(error instanceof ErrorFormato)) throw error;
         }
       }
-      if (completo) {
-        motivo = "completo";
-        break;
-      }
-      if (!cantidadDe(tanda)) {
+      if (!tanda || !cantidadDe(tanda)) {
         if (++rondasVacias >= 2) {
           motivo = "sin-novedades";
           break;
@@ -804,13 +855,16 @@ export function crearInvestigador({
       await buscarTanda(tanda);
     }
 
+    const total = `${hechas(false)} búsquedas web${hechas(true) ? ` y ${hechas(true)} de papers y libros` : ""}`;
     const avisoFinal = {
-      presupuesto: `Se usaron las ${hechas(false)} búsquedas previstas${hechas(true) ? ` y ${hechas(true)} de papers y libros` : ""}: redacto con lo encontrado.`,
-      irrelevantes: `Las últimas ${opciones.irrelevantesSeguidas} fuentes no aportaban al tema: dejo de buscar y redacto con lo encontrado.`,
-      "sin-novedades":
-        "El modelo ya no propone búsquedas distintas de las que se hicieron: redacto con lo encontrado.",
+      presupuesto: `Búsqueda terminada (${total}): redacto con lo encontrado.`,
+      rondas:
+        opciones.rondasExtra > 0
+          ? `Se llegó al máximo de ${opciones.rondasExtra} rondas (${total}): redacto con lo encontrado.`
+          : null,
+      "sin-novedades": `El modelo ya no propone búsquedas distintas de las que se hicieron (${total}): redacto con lo encontrado.`,
     }[motivo];
-    if (avisoFinal) emitir("aviso", { texto: avisoFinal });
+    if (avisoFinal && conversacion.fuentes.length) emitir("aviso", { texto: avisoFinal });
 
     if (!conversacion.fuentes.length) {
       throw (
@@ -884,7 +938,6 @@ export function crearInvestigador({
   async function seguir(conversacion, pregunta, flujo) {
     const contexto = contextoDe(flujo);
     const { emitir } = contexto;
-    conversacion.irrelevantesSeguidas = 0;
 
     emitir("etapa", { texto: "Revisando el informe" });
     let consultas = [];

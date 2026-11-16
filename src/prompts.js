@@ -67,7 +67,7 @@ const COMO_NATIVO =
 // no hay saldo en OpenAlex).
 export function promptPlan(tema, cantidad, { multilingue = false, libres = 0 } = {}) {
   const aparte = libres
-    ? ` Las de papers y libros no gastan el cupo de la búsqueda web: van aparte de las ${cantidad} consultas, hasta ${libres}, y conviene aprovecharlas con consultas bien distintas entre sí (cada subpregunta desde varios ángulos, con sus términos técnicos y sinónimos). Las de sitios sí cuentan dentro de las ${cantidad}.`
+    ? ` Las de papers y libros no gastan el cupo de la búsqueda web: van aparte de las ${cantidad} consultas: propone exactamente ${libres}, y conviene aprovecharlas con consultas bien distintas entre sí (cada subpregunta desde varios ángulos, con sus términos técnicos y sinónimos). Las de sitios sí cuentan dentro de las ${cantidad}.`
     : ' Hoy no hay búsquedas de papers ni de libros disponibles: no propongas dirigidas con destino "academico" ni "libros".';
   const idiomas = multilingue
     ? `Investigación multilingüe: además del idioma del pedido, busca en inglés y en chino, y en hasta 2 idiomas más solo si tienen fuentes especialmente valiosas para este tema (por ejemplo, el idioma del país o la región de la que trata, o donde más se investiga sobre él). Si el pedido limita idiomas, países o fuentes, respétalo y usa solo los idiomas compatibles con eso.
@@ -186,11 +186,13 @@ function cobertura(conversacion) {
 
 // `cupos`: cuántas consultas nuevas entran en la web, en los sitios pedidos y en papers y libros.
 // `descartadas`: las que el modelo propuso recién y se rechazaron por repetidas.
-export function promptRevision(conversacion, cupos, { exigir = false, descartadas = [] } = {}) {
+// La investigación ya no termina por el «ya alcanza» del modelo: cada ronda tiene que llenar sus
+// cupos y lo que corta es el presupuesto de cada buscador.
+export function promptRevision(conversacion, cupos, { descartadas = [] } = {}) {
   const cantidad = cupos.web;
   const pedir = cantidad
-    ? `hasta ${cantidad} consultas nuevas para la web`
-    : "solo consultas dirigidas (ya no quedan búsquedas web)";
+    ? `exactamente ${cantidad} consultas nuevas para la web`
+    : "solo consultas dirigidas (en esta ronda no van más consultas web)";
   const rechazadas = descartadas.length
     ? `
 Estas propuestas tuyas se descartaron por ser casi iguales a búsquedas ya hechas; no las repitas ni las reformules, apunta a otras subpreguntas o a otros ángulos:
@@ -206,13 +208,13 @@ ${cobertura(conversacion)}`
     : `Lo reunido hasta ahora:
 ${fichas(conversacion.fuentes, recorte)}`;
   const criterio = conAspectos
-    ? `Apunta las consultas a las subpreguntas con menos fuentes, o con fuentes poco confiables o viejas, y a los datos concretos que falten en las demás (cifras, fechas, comparaciones, posturas críticas). "completo" es true solo si todas las subpreguntas tienen al menos 3 fuentes y no faltan datos importantes. Si aparece un ángulo importante que ninguna subpregunta cubre, agrégalo en "aspectos_nuevos" (hasta 2).`
+    ? `Apunta las consultas a las subpreguntas con menos fuentes, o con fuentes poco confiables o viejas, y a los datos concretos que falten en las demás (cifras, fechas, comparaciones, posturas críticas, detalles técnicos). Si todas parecen cubiertas, profundiza: datos más precisos o recientes, casos, mediciones, otras fuentes que confirmen o contradigan. Si aparece un ángulo importante que ninguna subpregunta cubre, agrégalo en "aspectos_nuevos" (hasta 2).`
     : "";
   const formato = conversacion.idiomas?.length
     ? `Las consultas nuevas pueden ser en cualquiera de estos idiomas: ${conversacion.idiomas.map((idioma) => `${idioma.nombre} (${idioma.codigo})`).join(", ")}. Elige para cada una el idioma donde sea más probable encontrar lo que falta. ${COMO_NATIVO}
 
-Formato: {"completo": true, "consultas": []} o {"completo": false, "consultas": [{"idioma": "en", "texto": "...", "reciente": true}]${conAspectos ? ', "aspectos_nuevos": []' : ""}}`
-    : `Formato: {"completo": true, "consultas": []} o {"completo": false, "consultas": ["...", "..."]}`;
+Formato: {"consultas": [{"idioma": "en", "texto": "...", "reciente": true}]${conAspectos ? ', "aspectos_nuevos": []' : ""}}`
+    : `Formato: {"consultas": ["...", "..."]}`;
   return [
     { role: "system", content: `${base()} ${SOLO_JSON}` },
     {
@@ -227,11 +229,7 @@ ${consultasHechas(conversacion)}
 
 ${reunido}
 
-${
-        exigir
-          ? `Todavía no alcanza para un informe exhaustivo: propone ${pedir} para profundizar en lo menos cubierto, conseguir datos más recientes o más precisos, aclarar lo que las fuentes se contradicen y sumar fuentes en otros idiomas. Responde con "completo": false.`
-          : `Indica si con esto alcanza para un informe exhaustivo. Si faltan aspectos importantes, propone ${pedir} que los cubran.`
-      } ${criterio}
+La investigación sigue: propone ${pedir} para profundizar en lo menos cubierto, conseguir datos más recientes o más precisos, aclarar lo que las fuentes se contradicen y sumar fuentes en otros idiomas. Usa todo el cupo pedido, sin dejar lugares vacíos. ${criterio}
 Las consultas y las subpreguntas nuevas tienen que servir para responder el pedido tal como está planteado, con su escala, su contexto y lo que excluye: no abras temas vecinos que el pedido no pide.
 Las consultas nuevas tienen que ser distintas de las ya hechas: una parecida a otra trae las mismas páginas. Las que no trajeron nada útil necesitan otro enfoque u otras palabras, no la misma idea.
 ${rechazadas}${CORTA} ${RECIENTE}
@@ -275,14 +273,14 @@ Escribe un informe exhaustivo en Markdown:
 function destinoDeRevision({ academico, dominios = [], libros }, cupos) {
   const partes = [];
   if (cupos.sitios) {
-    partes.push(`hasta ${cupos.sitios} con destino "sitios", que se buscarán solo en ${dominios.join(", ")}`);
+    partes.push(`exactamente ${cupos.sitios} con destino "sitios", que se buscarán solo en ${dominios.join(", ")}`);
   }
   if (cupos.libres) {
     const donde = [academico && '"academico" (buscador de papers)', libros && '"libros"']
       .filter(Boolean)
       .join(" o ");
     partes.push(
-      `hasta ${cupos.libres} con destino ${donde}, que no gastan búsquedas web: aprovéchalas con consultas bien distintas entre sí`,
+      `exactamente ${cupos.libres} con destino ${donde}, que no gastan búsquedas web: aprovéchalas con consultas bien distintas entre sí`,
     );
   }
   if (!partes.length) return "";

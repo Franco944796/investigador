@@ -78,21 +78,24 @@ export function leerConfig(env = process.env) {
     investigacion: {
       consultasIniciales: entero(env, "CONSULTAS_INICIALES", 25),
       resultadosPorConsulta: entero(env, "RESULTADOS_POR_CONSULTA", 8),
-      // Las rondas sobran: lo que corta es maxBusquedas.
-      rondasExtra: entero(env, "RONDAS_EXTRA", 60),
+      // Tope de seguridad: lo que corta son los presupuestos de búsquedas (500 de papers a 16 por
+      // ronda ya son 30 rondas).
+      rondasExtra: entero(env, "RONDAS_EXTRA", 100),
       consultasPorRonda: entero(env, "CONSULTAS_POR_RONDA", 8),
       maxBusquedas: entero(env, "MAX_BUSQUEDAS", 100),
       // Papers y libros van a OpenAlex, que no gasta Tavily: tienen su propio tope por investigación.
       maxAcademicas: entero(env, "MAX_ACADEMICAS", 500),
       academicasIniciales: entero(env, "ACADEMICAS_INICIALES", 20),
       academicasPorRonda: entero(env, "ACADEMICAS_POR_RONDA", 16),
-      // Antes de esto no se acepta el «ya alcanza» del modelo (en la prueba real cortó en 40).
+      // Pasado cada mínimo, ese presupuesto termina cuando sus últimas BUSQUEDAS_SIN_APORTE
+      // búsquedas seguidas no aportan ninguna fuente (decisión de Franco, 2026-11-16).
       minBusquedas: entero(env, "MIN_BUSQUEDAS", 60),
+      minAcademicas: entero(env, "MIN_ACADEMICAS", 500),
+      busquedasSinAporte: entero(env, "BUSQUEDAS_SIN_APORTE", 20),
       // 0 = sin tope.
       maxFuentes: entero(env, "MAX_FUENTES", 0) || Infinity,
       multilingue: true,
       informePorSecciones: true,
-      irrelevantesSeguidas: entero(env, "IRRELEVANTES_SEGUIDAS", 20),
       fuentesPorSeguimiento: entero(env, "FUENTES_POR_SEGUIMIENTO", 24),
       caracteresPorFuente: entero(env, "CARACTERES_POR_FUENTE", 9000),
       tareasEnParalelo: entero(env, "TAREAS_EN_PARALELO", 3),
