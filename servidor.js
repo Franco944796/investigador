@@ -15,7 +15,7 @@ import { leerConfig } from "./src/config.js";
 import { crearInvestigador } from "./src/investigador.js";
 import { leerPagina } from "./src/lector.js";
 import { crearLLM } from "./src/llm.js";
-import { generarPDF } from "./src/pdf.js";
+import { crearGeneradorAparte } from "./src/pdfAparte.js";
 
 // Sin SECRETO_SESION se genera uno y se guarda: así las sesiones sobreviven a un reinicio.
 function secretoDeSesion({ secreto, carpetaDatos }) {
@@ -88,6 +88,7 @@ async function saldos() {
   return saldosGuardados.datos;
 }
 
+const generarPDF = crearGeneradorAparte({ memoriaMB: config.pdfMemoriaMB });
 const app = crearApp({ config, acceso, investigador, almacen, generarPDF, saldos });
 
 // Render duerme el servicio tras 15 minutos sin pedidos entrantes, aunque haya una

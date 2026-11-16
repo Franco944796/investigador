@@ -2,6 +2,7 @@ import { ErrorFormato, ErrorLLM } from "./llm.js";
 import { graficoValido } from "../public/graficos.js";
 import { seleccionarPasajes, terminosDe } from "./pasajes.js";
 import {
+  MAX_CUERPO,
   promptConclusiones,
   promptDecision,
   promptIndice,
@@ -9,9 +10,11 @@ import {
   promptNotas,
   promptPlan,
   promptResumen,
+  promptResumenDeSeccion,
   promptRevision,
   promptSeccion,
   promptSeguimiento,
+  promptUbicar,
 } from "./prompts.js";
 
 export class ErrorInvestigacion extends Error {}
@@ -302,36 +305,68 @@ export function depurarGraficos(markdown) {
     .trim();
 }
 
-const MAX_POR_SECCION = 40;
+// Con más fuentes, la sección se parte: sus notas ya ocupan ~60.000 caracteres.
+const MAX_POR_SECCION = 60;
+const FUENTES_POR_TANDA = 80;
+const OTROS = "Otros hallazgos";
 
-// Normaliza el índice que propone el modelo. Las fuentes que no quedaron en ninguna sección van a
-// secciones extra, para que el informe aproveche todas.
-export function seccionesDe(valor, total) {
-  const secciones = (Array.isArray(valor) ? valor : [])
+// Las secciones que propone el índice, sin fuentes todavía.
+export function seccionesPropuestas(valor) {
+  return (Array.isArray(valor) ? valor : [])
     .map((seccion) => ({
       titulo: typeof seccion?.titulo === "string" ? seccion.titulo.trim() : "",
       enfoque: typeof seccion?.enfoque === "string" ? seccion.enfoque.trim() : "",
-      fuentes: [
-        ...new Set(
-          (Array.isArray(seccion?.fuentes) ? seccion.fuentes : [])
-            .map(Number)
-            .filter((n) => Number.isInteger(n) && n >= 1 && n <= total),
-        ),
-      ].slice(0, MAX_POR_SECCION),
     }))
-    .filter((seccion) => seccion.titulo && seccion.fuentes.length);
-  const asignadas = new Set(secciones.flatMap((seccion) => seccion.fuentes));
-  const sueltas = Array.from({ length: total }, (_, i) => i + 1).filter((n) => !asignadas.has(n));
-  const partes = Math.ceil(sueltas.length / MAX_POR_SECCION);
-  for (let parte = 0; parte < partes; parte++) {
-    secciones.push({
-      titulo: partes > 1 ? `Otros hallazgos (${parte + 1} de ${partes})` : "Otros hallazgos",
-      enfoque: "Lo que aportan estas fuentes y no se cubrió en las secciones anteriores.",
-      fuentes: sueltas.slice(parte * MAX_POR_SECCION, (parte + 1) * MAX_POR_SECCION),
-    });
-  }
-  return secciones;
+    .filter((seccion) => seccion.titulo && seccion.titulo !== OTROS);
 }
+
+// Lee la respuesta de una tanda: {"fuentes": {"12": [3], "13": [1, 5], "14": [0]}}. Cada fuente va a
+// hasta 2 secciones; 0 o nada válido = ninguna. Las que el modelo no mencionó quedan sin anotar.
+export function leerUbicacion(respuesta, numeros, cantidad, ubicacion = new Map()) {
+  const dadas = respuesta?.fuentes && typeof respuesta.fuentes === "object" ? respuesta.fuentes : {};
+  for (const n of numeros) {
+    if (!(String(n) in dadas)) continue;
+    const valor = dadas[String(n)];
+    const lista = (Array.isArray(valor) ? valor : [valor])
+      .map(Number)
+      .filter((k) => Number.isInteger(k) && k >= 1 && k <= cantidad);
+    ubicacion.set(n, [...new Set(lista)].slice(0, 2));
+  }
+  return ubicacion;
+}
+
+// Cada sección con las fuentes que se le ubicaron, partida si pasa de MAX_POR_SECCION; las que no
+// fueron a ninguna van a «Otros hallazgos», para que el informe aproveche todas.
+export function seccionesConFuentes(propuestas, ubicacion, total) {
+  const secciones = propuestas.map((seccion) => ({ ...seccion, fuentes: [] }));
+  const sueltas = [];
+  for (let n = 1; n <= total; n++) {
+    const destinos = ubicacion.get(n) ?? [];
+    if (!destinos.length) sueltas.push(n);
+    for (const k of destinos) secciones[k - 1]?.fuentes.push(n);
+  }
+  // Partes parejas: 126 fuentes son 3 de 42, no 60 + 60 + 6 (la última quedaba casi vacía).
+  const enPartes = ({ titulo, enfoque, fuentes }) => {
+    const partes = Math.ceil(fuentes.length / MAX_POR_SECCION);
+    const tamano = Math.ceil(fuentes.length / partes);
+    return Array.from({ length: partes }, (_, parte) => ({
+      titulo: partes > 1 ? `${titulo} (parte ${parte + 1} de ${partes})` : titulo,
+      enfoque,
+      fuentes: fuentes.slice(parte * tamano, (parte + 1) * tamano),
+    }));
+  };
+  return [
+    ...secciones.flatMap(enPartes),
+    ...enPartes({
+      titulo: OTROS,
+      enfoque: "Lo que aportan estas fuentes y no se cubrió en las secciones anteriores.",
+      fuentes: sueltas,
+    }),
+  ];
+}
+
+const enTrozos = (lista, tamano) =>
+  Array.from({ length: Math.ceil(lista.length / tamano) }, (_, i) => lista.slice(i * tamano, (i + 1) * tamano));
 
 const nombresDe = (idiomas) => {
   const nombres = idiomas.map((idioma) => idioma.nombre);
@@ -893,6 +928,53 @@ export function crearInvestigador({
   // Con cientos de fuentes, una sola respuesta del modelo no alcanza: se arma un índice, cada
   // sección se escribe con las notas de sus fuentes y al final el resumen y las conclusiones.
   // El resumen va arriba pero se escribe último, así que el texto se muestra entero al terminar.
+  // Si una tanda falla o el modelo saltea fuentes, se le piden una vez más; las que sigan sin lugar
+  // van a «Otros hallazgos».
+  async function ubicarFuentes(conversacion, secciones, contexto) {
+    const ubicacion = new Map();
+    const numeros = conversacion.fuentes.map((fuente) => fuente.n);
+    if (secciones.length === 1) {
+      for (const n of numeros) ubicacion.set(n, [1]);
+    }
+    if (secciones.length < 2) return ubicacion;
+    const ubicar = async (lote) => {
+      try {
+        const respuesta = await llm.completarJSON(promptUbicar(conversacion, secciones, lote), contexto);
+        leerUbicacion(respuesta, lote, secciones.length, ubicacion);
+      } catch (error) {
+        if (contexto.signal.aborted || !(error instanceof ErrorFormato || error instanceof ErrorLLM)) throw error;
+      }
+    };
+    for (const pendientes of [numeros, null]) {
+      const lista = pendientes ?? numeros.filter((n) => !ubicacion.has(n));
+      const tandas = enTrozos(lista, FUENTES_POR_TANDA);
+      let empezadas = 0;
+      await enParalelo(tandas, opciones.tareasEnParalelo, async (lote) => {
+        contexto.emitir("etapa", {
+          texto: `Ubicando las fuentes en las secciones (tanda ${++empezadas} de ${tandas.length}${pendientes ? "" : ", las que faltaban"})`,
+        });
+        await ubicar(lote);
+      });
+    }
+    return ubicacion;
+  }
+
+  async function resumirSecciones(conversacion, secciones, partes, contexto) {
+    contexto.emitir("etapa", { texto: "Resumiendo cada sección para el resumen y las conclusiones" });
+    const resumenes = [];
+    await enParalelo(partes, opciones.tareasEnParalelo, async (texto, numero) => {
+      let resumen;
+      try {
+        resumen = (await llm.completar(promptResumenDeSeccion(conversacion, texto), contexto)).trim();
+      } catch (error) {
+        if (contexto.signal.aborted || !(error instanceof ErrorLLM)) throw error;
+        resumen = texto.slice(0, Math.floor(MAX_CUERPO / partes.length));
+      }
+      resumenes[numero] = `## ${secciones[numero].titulo}\n\n${resumen}`;
+    });
+    return resumenes.join("\n\n");
+  }
+
   async function redactarPorSecciones(conversacion, contexto) {
     const { emitir, signal } = contexto;
     emitir("etapa", { texto: "Organizando el informe" });
@@ -902,7 +984,9 @@ export function crearInvestigador({
     } catch (error) {
       if (!(error instanceof ErrorFormato)) throw error;
     }
-    const secciones = seccionesDe(indice.secciones, conversacion.fuentes.length);
+    const propuestas = seccionesPropuestas(indice.secciones);
+    const ubicacion = await ubicarFuentes(conversacion, propuestas, contexto);
+    const secciones = seccionesConFuentes(propuestas, ubicacion, conversacion.fuentes.length);
     const titulo =
       (typeof indice.titulo === "string" && indice.titulo.trim()) ||
       `Informe: ${conversacion.tema.split("\n")[0].replace(/^pregunta:\s*/i, "")}`;
@@ -927,9 +1011,13 @@ export function crearInvestigador({
     if (fallidas === secciones.length) throw new ErrorLLM("No se pudo redactar ninguna sección.");
 
     const cuerpo = partes.join("\n\n");
+    // Si el informe no entra entero, el resumen y las conclusiones leen un resumen de cada sección
+    // (antes leían solo el comienzo y, con mil fuentes, ignoraban la mitad del informe).
+    const resumido = cuerpo.length > MAX_CUERPO;
+    const material = resumido ? await resumirSecciones(conversacion, secciones, partes, contexto) : cuerpo;
     emitir("etapa", { texto: "Redactando el resumen y las conclusiones" });
-    const inicio = await llm.completar(promptResumen(conversacion, titulo, cuerpo), contexto);
-    const cierre = await llm.completar(promptConclusiones(conversacion, cuerpo), contexto);
+    const inicio = await llm.completar(promptResumen(conversacion, titulo, material, { resumido }), contexto);
+    const cierre = await llm.completar(promptConclusiones(conversacion, material, { resumido }), contexto);
     const informe = [inicio.trim(), cuerpo, cierre.trim()].join("\n\n");
     emitir("texto", { delta: informe });
     return informe;

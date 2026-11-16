@@ -3,7 +3,8 @@ import { fileURLToPath } from "node:url";
 import express from "express";
 import { crearConversacion, ErrorInvestigacion } from "./investigador.js";
 import { ErrorLLM } from "./llm.js";
-import { nombreDeArchivo, tituloDelPedido } from "./pdf.js";
+import { ErrorPDF } from "./pdfAparte.js";
+import { nombreDeArchivo, tituloDelPedido } from "./titulos.js";
 import { VENDOR } from "./vendor.js";
 
 const LATIDO_MS = 15000;
@@ -150,7 +151,12 @@ function desdeRegistro(registro) {
   return enMemoria(conversacion, { ...campos, ...datos, vistas: new Set(datos.vistas) });
 }
 
+const PDFS_GUARDADOS = 3;
+
 export function crearApp({ config, acceso, investigador, almacen, generarPDF, saldos }) {
+  // Los últimos PDF armados (hasta ~4 MB cada uno), para no rearmarlos en cada descarga. Viven en
+  // memoria: tras un reinicio se arman de nuevo.
+  const pdfsGuardados = new Map();
   const opciones = config.investigacion;
   const activas = new Map();
   const cargando = new Map();
@@ -433,6 +439,7 @@ export function crearApp({ config, acceso, investigador, almacen, generarPDF, sa
     await conversacion.guardando;
     await almacen.borrar(conversacion.id, conversacion.dueno);
     activas.delete(conversacion.id);
+    pdfsGuardados.delete(conversacion.id);
     res.status(204).end();
   });
 
@@ -442,11 +449,23 @@ export function crearApp({ config, acceso, investigador, almacen, generarPDF, sa
     if (!conversacion.informe) {
       return res.status(409).json({ error: "El informe todavía no está terminado." });
     }
-    const pdf = await generarPDF({
-      titulo: tituloDelPedido(conversacion.tema),
-      markdown: conversacion.informe,
-      fuentes: conversacion.fuentes,
-    });
+    const guardado = pdfsGuardados.get(conversacion.id);
+    let pdf = guardado?.informe === conversacion.informe ? guardado.pdf : null;
+    if (!pdf) {
+      try {
+        pdf = await generarPDF({
+          titulo: tituloDelPedido(conversacion.tema),
+          markdown: conversacion.informe,
+          fuentes: conversacion.fuentes,
+        });
+      } catch (error) {
+        if (error instanceof ErrorPDF) return res.status(503).json({ error: error.message });
+        throw error;
+      }
+      pdfsGuardados.delete(conversacion.id);
+      pdfsGuardados.set(conversacion.id, { informe: conversacion.informe, pdf });
+      if (pdfsGuardados.size > PDFS_GUARDADOS) pdfsGuardados.delete(pdfsGuardados.keys().next().value);
+    }
     res
       .set({
         "Content-Type": "application/pdf",

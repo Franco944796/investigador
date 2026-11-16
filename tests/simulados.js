@@ -38,13 +38,20 @@ const PLAN_MULTILINGUE = {
 
 const INDICE = {
   titulo: "Informe de prueba",
-  secciones: [{ titulo: "Comparación", enfoque: "datos de cada opción", fuentes: [1, 2] }],
+  secciones: [
+    { titulo: "Comparación", enfoque: "datos de cada opción" },
+    { titulo: "Contexto", enfoque: "de dónde viene cada opción" },
+  ],
 };
 
 function responder(cuerpo, estado) {
   const ultimo = cuerpo.messages.at(-1).content;
   if (ultimo.includes('"idiomas"')) return JSON.stringify(PLAN_MULTILINGUE);
   if (ultimo.includes('"secciones"')) return JSON.stringify(INDICE);
+  if (ultimo.includes("Ubica cada fuente")) {
+    const numeros = [...ultimo.matchAll(/^\[(\d+)\]/gm)].map((m) => m[1]);
+    return JSON.stringify({ fuentes: Object.fromEntries(numeros.map((n) => [n, [n % 2 ? 1 : 2]])) });
+  }
   if (ultimo.includes("Te toca la sección")) {
     const grafico = {
       tipo: "barras",

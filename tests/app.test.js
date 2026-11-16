@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 import { crearAlmacenMemoria } from "../src/almacen.js";
+import { ErrorPDF } from "../src/pdfAparte.js";
 import { cliente, crearAcceso, crearAlmacenPGlite, levantar, textoDe, ultimoTurno } from "./ayuda.js";
 import { iniciarLLMSimulado } from "./simulados.js";
 
@@ -251,4 +252,40 @@ test("el estado informa los saldos de búsqueda solo con sesión", async () => {
   assert.equal((await ana.pedir("/api/estado")).status, 401);
   await ana.entrar("codigo-de-ana");
   assert.deepEqual(await (await ana.pedir("/api/estado")).json(), estado);
+});
+
+test("PDF: el armado se guarda para la próxima descarga y, si no alcanza la memoria, avisa sin caerse", async () => {
+  let armados = 0;
+  let sinMemoria = false;
+  const levantado = await levantar({
+    acceso: crearAcceso("carla:codigo-de-carla:0"),
+    almacen: crearAlmacenMemoria(),
+    urlLLM: llmSimulado.urlBase,
+    entorno: ENTORNO,
+    pdf: async () => {
+      armados++;
+      if (sinMemoria) throw new ErrorPDF("El informe es demasiado grande para armar el PDF.");
+      return Buffer.from("%PDF-prueba");
+    },
+  });
+  cerrar.push(levantado.servidor);
+  const carla = cliente(levantado.base);
+  await carla.entrar("codigo-de-carla");
+  const { conversacion } = await (await carla.investigar("Tema del PDF")).json();
+  await carla.eventos(conversacion);
+
+  for (let vez = 0; vez < 2; vez++) {
+    const respuesta = await carla.pedir(`/api/informe/${conversacion}`);
+    assert.equal(respuesta.status, 200);
+    assert.equal(await respuesta.text(), "%PDF-prueba");
+  }
+  assert.equal(armados, 1, "la segunda descarga usa el PDF guardado");
+
+  const otra = (await (await carla.investigar("Otro tema")).json()).conversacion;
+  await carla.eventos(otra);
+  sinMemoria = true;
+  const fallida = await carla.pedir(`/api/informe/${otra}`);
+  assert.equal(fallida.status, 503);
+  assert.deepEqual(await fallida.json(), { error: "El informe es demasiado grande para armar el PDF." });
+  assert.equal((await carla.pedir("/api/sesion")).status, 200, "el servidor sigue andando");
 });

@@ -7,6 +7,7 @@ import pdfmake from "pdfmake";
 import { PARTIR, latexATexto, separarFormulas } from "../public/formulas.js";
 import { dibujarGrafico, imagenDe, tipoDeGrafico } from "../public/graficos.js";
 import { descargarImagen } from "./lector.js";
+import { fechaDelPie, textoDelPie } from "./titulos.js";
 
 const AZUL = "#1a56b0";
 const ANCHO_UTIL = 483;
@@ -369,7 +370,9 @@ function bloqueDeGrafico(texto, urls, imagenes) {
   ];
 }
 
-export async function generarPDF({ titulo, markdown, fuentes }) {
+// `conPie: false` para las partes de un PDF grande: el pie con la numeración se pone al unirlas
+// (ver src/unirPDF.js), porque cada parte solo conoce sus propias páginas.
+export async function generarPDF({ titulo, markdown, fuentes, conPie = true }) {
   const urls = new Map(fuentes.map((fuente) => [fuente.n, fuente.url]));
   const separado = separarFormulas(markdown);
   const tokens = marked.lexer(aptoParaPDF(separado.texto));
@@ -382,7 +385,7 @@ export async function generarPDF({ titulo, markdown, fuentes }) {
       ]),
     ),
   );
-  const fecha = new Date().toLocaleDateString("es-AR");
+  const fecha = fechaDelPie();
   formulas = separado.formulas;
   const contenido = bloques(tokens, urls, imagenes);
   return pdfmake
@@ -391,13 +394,15 @@ export async function generarPDF({ titulo, markdown, fuentes }) {
       pageSize: "A4",
       pageMargins: [56, 56, 56, 64],
       defaultStyle: { font: "Roboto", fontSize: 10.5, lineHeight: 1.3 },
-      footer: (pagina, total) => ({
-        text: `Generado el ${fecha} · ${pagina} / ${total}`,
-        alignment: "center",
-        fontSize: 8,
-        color: "#777777",
-        margin: [0, 24, 0, 0],
-      }),
+      footer: conPie
+        ? (pagina, total) => ({
+            text: textoDelPie(fecha, pagina, total),
+            alignment: "center",
+            fontSize: 8,
+            color: "#777777",
+            margin: [0, 24, 0, 0],
+          })
+        : undefined,
       content: contenido,
       styles: {
         h1: { fontSize: 20, bold: true, lineHeight: 1.15, margin: [0, 0, 0, 12] },
@@ -410,18 +415,5 @@ export async function generarPDF({ titulo, markdown, fuentes }) {
     .getBuffer();
 }
 
-// Con la plantilla de la página, el pedido empieza con "Pregunta: …": esa línea es el título.
-export function tituloDelPedido(tema) {
-  return tema.match(/^\s*Pregunta:[ \t]*(\S.*)$/im)?.[1].trim() ?? tema;
-}
-
-export function nombreDeArchivo(tema) {
-  const base = tituloDelPedido(tema)
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 60);
-  return `${base || "informe"}.pdf`;
-}
+// El servidor las importa de titulos.js para no cargar las fuentes del PDF en su memoria.
+export { nombreDeArchivo, tituloDelPedido } from "./titulos.js";

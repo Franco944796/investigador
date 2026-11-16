@@ -55,6 +55,9 @@ export function leerConfig(env = process.env) {
     cabeceraIp: (env.CABECERA_IP || "").trim().toLowerCase(),
     proveedores: leerProveedores(env),
     limiteLLMMs: entero(env, "LLM_LIMITE_MINUTOS", 30) * 60 * 1000,
+    // Tope de memoria del proceso que arma el PDF: con 160 MB, uno de 1.000 fuentes llega a ~345 MB
+    // en total (con 112 no alcanza); el servidor queda en ~100 MB, dentro de los 512 de Render.
+    pdfMemoriaMB: entero(env, "PDF_MEMORIA_MB", 160),
     tavilyClave: env.TAVILY_CLAVE || "",
     openalexClave: env.OPENALEX_CLAVE || "",
     // Video y redes sociales: casi nunca sirven como fuente de un informe. Si el pedido nombra uno

@@ -7,7 +7,9 @@ import {
   interpretarNotas,
   parecidas,
   porTurnos,
-  seccionesDe,
+  leerUbicacion,
+  seccionesConFuentes,
+  seccionesPropuestas,
 } from "../src/investigador.js";
 import { promptRevision } from "../src/prompts.js";
 
@@ -79,24 +81,95 @@ test("consultas e índice del modelo se normalizan; las fuentes sin sección no 
     consultasDe(["  uno ", { idioma: "ZH", texto: "太阳能" }, { texto: "uno" }, 3, { idioma: "en" }]),
     [{ texto: "uno" }, { texto: "太阳能", idioma: "zh" }],
   );
-  const muchas = Array.from({ length: 50 }, (_, i) => i + 1);
-  const secciones = seccionesDe(
-    [
-      { titulo: "Grande", enfoque: "a", fuentes: [...muchas, 999, "2", 0] },
-      { titulo: "Vacía", fuentes: [] },
-      { titulo: "", fuentes: [1] },
-    ],
-    95,
-  );
+});
+
+test("secciones: las fuentes van a donde las ubicó el modelo; las grandes se parten y las sueltas van a Otros hallazgos", () => {
+  const propuestas = seccionesPropuestas([
+    { titulo: "Grande", enfoque: "a" },
+    { titulo: "Chica", enfoque: "b" },
+    { titulo: "" },
+    { titulo: "Otros hallazgos" },
+  ]);
+  assert.deepEqual(propuestas.map((s) => s.titulo), ["Grande", "Chica"]);
+  const ubicacion = new Map();
+  // Respuesta con formatos mezclados: lista, número suelto, 0, fuera de rango, repetidos y una sin mencionar.
+  const respuesta = { fuentes: { 1: [1, 2, 2], 2: 2, 3: [0], 4: [7], 5: [1, 2, 1] } };
+  leerUbicacion(respuesta, [1, 2, 3, 4, 5, 6], 2, ubicacion);
+  assert.deepEqual([...ubicacion], [[1, [1, 2]], [2, [2]], [3, []], [4, []], [5, [1, 2]]]);
+  for (let n = 7; n <= 130; n++) ubicacion.set(n, [1]);
+  const secciones = seccionesConFuentes(propuestas, ubicacion, 130);
   assert.deepEqual(
     secciones.map((s) => [s.titulo, s.fuentes.length]),
     [
-      ["Grande", 40],
-      ["Otros hallazgos (1 de 2)", 40],
-      ["Otros hallazgos (2 de 2)", 15],
+      ["Grande (parte 1 de 3)", 42],
+      ["Grande (parte 2 de 3)", 42],
+      ["Grande (parte 3 de 3)", 42],
+      ["Chica", 3],
+      ["Otros hallazgos", 3],
     ],
   );
-  assert.deepEqual(secciones[1].fuentes.slice(0, 2), [41, 42]);
+  assert.deepEqual(secciones.at(-2).fuentes, [1, 2, 5]);
+  assert.deepEqual(secciones.at(-1).fuentes, [3, 4, 6], "0, fuera de rango y sin mencionar");
+});
+
+test("informe: las fuentes se ubican por tandas; las salteadas se piden otra vez; si no entra, se resume cada sección", async () => {
+  const ubicar = [];
+  const resumenesPedidos = [];
+  let cierre = "";
+  const largo = "x".repeat(90000);
+  const investigador = crearInvestigador({
+    llm: {
+      ...llmFijo,
+      completarJSON: async (mensajes) => {
+        const texto = mensajes.at(-1).content;
+        if (texto.includes('"secciones"')) {
+          return { titulo: "T", secciones: [{ titulo: "Costos", enfoque: "a" }, { titulo: "Usos", enfoque: "b" }] };
+        }
+        if (texto.includes("Ubica cada fuente")) {
+          const numeros = [...texto.matchAll(/^\[(\d+)\]/gm)].map((m) => Number(m[1]));
+          ubicar.push(numeros);
+          // La primera vez saltea la 3; la segunda la ubica.
+          return { fuentes: Object.fromEntries(numeros.filter((n) => ubicar.length > 1 || n !== 3).map((n) => [n, [n % 2 ? 1 : 2]])) };
+        }
+        return { consultas: ["consulta"] };
+      },
+      completar: async (mensajes) => {
+        const texto = mensajes.at(-1).content;
+        if (texto.includes("Te toca la sección")) {
+          const fuentes = [...texto.matchAll(/^\[(\d+)\]/gm)].map((m) => m[1]).join(",");
+          return `## ${texto.match(/sección \d+: "([^"]+)"/)[1]}\n\nFuentes ${fuentes} [1]. ${largo}`;
+        }
+        if (texto.includes("Resume esta sección")) {
+          resumenesPedidos.push(texto.match(/Fuentes ([\d,]+)/)[1]);
+          return `Resumen de ${texto.match(/## (\w+)/)[1]} [1].`;
+        }
+        if (texto.includes("comienzo del informe")) return "# T\n\n## Resumen\n\nHallazgos [1].";
+        if (texto.includes("cierre del informe")) {
+          cierre = texto;
+          return "## Conclusiones\n\nConviene [1].";
+        }
+        return "Notas útiles.";
+      },
+    },
+    opciones: { ...OPCIONES, resultadosPorConsulta: 4, informePorSecciones: true },
+    buscar: async () => ({
+      resultados: [1, 2, 3, 4].map((n) => ({ titulo: `F${n}`, url: `https://a.test/${n}`, contenido: LARGO })),
+    }),
+    leerPagina: async () => assert.fail("no hace falta leer"),
+  });
+  const eventos = [];
+  const conversacion = crearConversacion("id", "ana", "Tema");
+  await investigador.investigar(conversacion, flujoDe(eventos));
+
+  assert.deepEqual(ubicar, [[1, 2, 3, 4], [3]]);
+  assert.deepEqual(resumenesPedidos, ["1,3", "2,4"], "Costos: 1 y 3 (la que faltaba); Usos: 2 y 4");
+  assert.ok(cierre.includes("Resumen de cada sección del informe"));
+  assert.ok(cierre.includes("## Costos\n\nResumen de Costos [1]."));
+  assert.ok(!cierre.includes(largo), "el cierre no recibe el texto completo");
+  const etapas = eventos.filter((e) => e.tipo === "etapa").map((e) => e.datos.texto);
+  assert.ok(etapas.includes("Ubicando las fuentes en las secciones (tanda 1 de 1)"));
+  assert.ok(etapas.includes("Ubicando las fuentes en las secciones (tanda 1 de 1, las que faltaban)"));
+  assert.ok(etapas.includes("Resumiendo cada sección para el resumen y las conclusiones"));
 });
 
 test("exhaustiva: busca en varios idiomas y escribe el informe por secciones", async () => {
@@ -106,7 +179,7 @@ test("exhaustiva: busca en varios idiomas y escribe el informe por secciones", a
       const texto = mensajes.at(-1).content;
       pedidos.push(texto);
       if (texto.includes('"secciones"')) {
-        return { titulo: "Informe solar", secciones: [{ titulo: "Costos", enfoque: "precios", fuentes: [1, 2] }] };
+        return { titulo: "Informe solar", secciones: [{ titulo: "Costos", enfoque: "precios" }] };
       }
       return {
         idiomas: [
@@ -149,14 +222,13 @@ test("exhaustiva: busca en varios idiomas y escribe el informe por secciones", a
   );
   const etapas = eventos.filter((e) => e.tipo === "etapa").map((e) => e.datos.texto);
   assert.ok(etapas.includes("Buscando y leyendo fuentes en español, inglés y chino"));
-  assert.ok(etapas.includes("Redactando el informe (sección 2 de 2)"));
+  assert.ok(etapas.includes("Redactando el informe (sección 1 de 1)"), "con una sola sección, todas las fuentes van ahí");
 
   const titulos = conversacion.informe.match(/^#{1,2} .+$/gm);
   assert.deepEqual(titulos, [
     "# Informe solar",
     "## Resumen",
     "## Costos",
-    "## Otros hallazgos",
     "## Conclusiones",
     "## Fuentes",
   ]);

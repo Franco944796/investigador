@@ -6,8 +6,9 @@ const MAX_CONTEXTO_SEGUIMIENTO = 90000;
 const INTERCAMBIOS_RECORDADOS = 4;
 // El índice ve el comienzo de las notas de cada fuente; con cientos de fuentes, menos de cada una.
 const MAX_INDICE = 100000;
-// Tope del informe que reciben el resumen y las conclusiones (~40.000 tokens).
-const MAX_CUERPO = 160000;
+// Tope del informe que reciben el resumen y las conclusiones (~40.000 tokens). Si el cuerpo es más
+// largo, reciben un resumen de cada sección (ver redactarPorSecciones).
+export const MAX_CUERPO = 160000;
 const CORTA =
   "Cada consulta debe ser breve y específica, como se escribe en un buscador: entre 3 y 9 palabras (en chino, japonés o coreano, de 4 a 16 caracteres), sin operadores como site: ni comillas. No pongas el año salvo que busques datos de un año puntual.";
 const RECIENTE =
@@ -340,7 +341,7 @@ const RESPETAR_PEDIDO =
 export function promptIndice(conversacion) {
   const total = conversacion.fuentes.length || 1;
   const recorte = Math.max(60, Math.min(160, Math.floor(MAX_INDICE / total) - 90));
-  const maximo = Math.min(30, Math.max(14, Math.ceil(total / 25)));
+  const maximo = Math.min(40, Math.max(14, Math.ceil(total / 30)));
   // Con pocas fuentes, seis secciones quedan casi vacías y cada una cuesta una llamada.
   const minimo = Math.min(6, Math.max(2, Math.ceil(total / 6)));
   const resumenes = conversacion.fuentes
@@ -370,11 +371,66 @@ ${resumenes}
 
 Organiza un informe exhaustivo en secciones:
 - Entre ${minimo} y ${maximo} secciones, en un orden lógico de lectura, que cubran todo lo que aportan las fuentes. Sin secciones de resumen, conclusiones ni fuentes: se escriben aparte.
-- Asigna a cada sección los números de las fuentes que le sirven (una fuente puede ir en varias). Cada fuente en al menos una sección; ninguna sección con más de 40.
+- Cada sección con un tema propio y bien delimitado, para que cada fuente tenga un lugar claro. Las fuentes se ubican en las secciones después, en otro paso: acá no las asignes.
 - Si el pedido indica formato de entrega o aspectos a cubrir, las secciones deben cumplirlo (por ejemplo, una sección con la tabla comparativa pedida). Una recomendación final va en las conclusiones, no en una sección.
 - Nada sobre lo que el pedido pide excluir.
 
-Formato: {"titulo": "...", "secciones": [{"titulo": "...", "enfoque": "qué cubre, en una frase", "fuentes": [1, 4, 7]}]}`,
+Formato: {"titulo": "...", "secciones": [{"titulo": "...", "enfoque": "qué cubre, en una frase"}]}`,
+    },
+  ];
+}
+
+// Ubicar las fuentes por tandas, cada una con su contenido a la vista: al pedirle al índice que
+// asignara cientos de números, algunos modelos repartían 1–40, 41–80… sin mirar el tema.
+export function promptUbicar(conversacion, secciones, numeros) {
+  const porNumero = new Map(conversacion.fuentes.map((fuente) => [fuente.n, fuente]));
+  const lista = numeros
+    .map((n) => porNumero.get(n))
+    .filter(Boolean)
+    .map((fuente) => `[${fuente.n}] ${fuente.titulo}: ${fuente.notas.slice(0, 300)}`)
+    .join("\n");
+  const ejemplo = numeros
+    .slice(0, 2)
+    .map((n, i) => `"${n}": ${i ? "[1, 5]" : "[3]"}`)
+    .join(", ");
+  return [
+    { role: "system", content: `${base()} ${SOLO_JSON}` },
+    {
+      role: "user",
+      content: `Tema a investigar:
+"""
+${conversacion.tema}
+"""
+
+Secciones del informe:
+${secciones.map((seccion, k) => `${k + 1}. ${seccion.titulo} — ${seccion.enfoque}`).join("\n")}
+
+Fuentes (número, título y comienzo de las notas):
+${lista}
+
+Ubica cada fuente en la sección donde más sirve, según lo que dicen sus notas (no según su número). Si también aporta mucho a otra sección, agrega esa segunda. Si no sirve para ninguna, pon 0. Tienen que estar todas las fuentes de la lista.
+
+Formato: {"fuentes": {${ejemplo}}}`,
+    },
+  ];
+}
+
+export function promptResumenDeSeccion(conversacion, texto) {
+  return [
+    { role: "system", content: `${base()} ${DE_LAS_NOTAS}` },
+    {
+      role: "user",
+      content: `Tema a investigar:
+"""
+${conversacion.tema}
+"""
+
+Sección de un informe:
+"""
+${texto.replace(/\`\`\`grafico[^]*?\`\`\`/g, "")}
+"""
+
+Resume esta sección en 6 a 12 líneas: los hallazgos, cifras, comparaciones y conclusiones principales, con sus citas [n] tal como aparecen en el texto. Sin títulos ni introducción; nada que no esté en la sección.`,
     },
   ];
 }
@@ -416,7 +472,19 @@ Escribe solo esta sección, en Markdown:
 const cuerpoAcotado = (cuerpo) =>
   cuerpo.length > MAX_CUERPO ? `${cuerpo.slice(0, MAX_CUERPO)}\n[…]` : cuerpo;
 
-export function promptResumen(conversacion, titulo, cuerpo) {
+// Con `resumido`, `cuerpo` trae un resumen de cada sección en vez del texto completo.
+const materialDeCierre = (cuerpo, resumido) =>
+  resumido
+    ? `Resumen de cada sección del informe (el informe completo es más largo; usa lo que dicen estos resúmenes):
+"""
+${cuerpo}
+"""`
+    : `Secciones del informe, ya escritas:
+"""
+${cuerpoAcotado(cuerpo)}
+"""`;
+
+export function promptResumen(conversacion, titulo, cuerpo, { resumido = false } = {}) {
   return [
     { role: "system", content: `${base()} ${DE_LAS_NOTAS}` },
     {
@@ -426,10 +494,7 @@ export function promptResumen(conversacion, titulo, cuerpo) {
 ${conversacion.tema}
 """
 
-Secciones del informe, ya escritas:
-"""
-${cuerpoAcotado(cuerpo)}
-"""
+${materialDeCierre(cuerpo, resumido)}
 
 Escribe el comienzo del informe, en Markdown:
 - La primera línea es exactamente: # ${titulo}
@@ -440,7 +505,7 @@ Escribe el comienzo del informe, en Markdown:
   ];
 }
 
-export function promptConclusiones(conversacion, cuerpo) {
+export function promptConclusiones(conversacion, cuerpo, { resumido = false } = {}) {
   return [
     { role: "system", content: `${base()} ${DE_LAS_NOTAS}` },
     {
@@ -450,10 +515,7 @@ export function promptConclusiones(conversacion, cuerpo) {
 ${conversacion.tema}
 """
 
-Secciones del informe, ya escritas:
-"""
-${cuerpoAcotado(cuerpo)}
-"""
+${materialDeCierre(cuerpo, resumido)}
 
 Escribe el cierre del informe, en Markdown:
 - "## Conclusiones": lo que se concluye de la investigación. Si el pedido pide una recomendación, dala acá, justificada.

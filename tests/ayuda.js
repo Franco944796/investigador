@@ -27,7 +27,15 @@ export async function crearAlmacenPGlite() {
   return crearAlmacenSQL(async (texto, parametros) => (await base.query(texto, parametros)).rows);
 }
 
-export async function levantar({ acceso, almacen, urlLLM, entorno = {}, demoraLectorMs = 0, saldos }) {
+export async function levantar({
+  acceso,
+  almacen,
+  urlLLM,
+  entorno = {},
+  demoraLectorMs = 0,
+  saldos,
+  pdf = generarPDF,
+}) {
   const config = leerConfig(entorno);
   const investigador = crearInvestigador({
     llm: crearLLM([{ urlBase: urlLLM, clave: "", modelo: "auto" }], { esperas: [5, 5] }),
@@ -36,7 +44,7 @@ export async function levantar({ acceso, almacen, urlLLM, entorno = {}, demoraLe
     opciones: config.investigacion,
   });
   await almacen.preparar();
-  const app = crearApp({ config, acceso, investigador, almacen, generarPDF, saldos });
+  const app = crearApp({ config, acceso, investigador, almacen, generarPDF: pdf, saldos });
   const servidor = app.listen(0, "127.0.0.1");
   await new Promise((listo) => servidor.once("listening", listo));
   return { app, servidor, base: `http://127.0.0.1:${servidor.address().port}` };
