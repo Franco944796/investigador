@@ -15,8 +15,8 @@ const TAREAS = {
     aArchivo(await (await import("./pdf.js")).generarCuerpo(datos), datos.salida),
   portada: async (datos) =>
     aArchivo(await (await import("./pdf.js")).generarPortada(datos), datos.salida),
-  unir: async ({ partes, titulo, paginas }) =>
-    (await import("./unirPDF.js")).unirPartes(partes, titulo, paginas),
+  unir: async ({ partes, titulo, paginas, firma }) =>
+    (await import("./unirPDF.js")).unirPartes(partes, titulo, paginas, firma),
   texto: async (datos) => (await import("./extraerPDF.js")).extraerTextoPDF(datos),
 };
 

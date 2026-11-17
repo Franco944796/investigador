@@ -5,8 +5,9 @@ import { VENDOR } from "../src/vendor.js";
 
 const RAIZ = fileURLToPath(new URL("..", import.meta.url));
 const META_API = '<meta name="api" content="" />';
-// Páginas que hablan con la API (las dos cargan comun.js, que lee la dirección de su meta).
-const PAGINAS = ["index.html", "informe.html"];
+// Páginas que cargan comun.js, que lee la dirección de la API de su meta (la muestra no la usa,
+// pero lleva igual la meta y la política).
+const PAGINAS = ["index.html", "informe.html", "muestra.html"];
 
 // Copia public/ y las librerías a `destino`, apuntando la página a la API de `urlApi`.
 export function armarPagina(destino, urlApi) {

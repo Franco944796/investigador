@@ -12,7 +12,7 @@ const cargar = async (parte) =>
 // y se guarda antes de copiarla: dibujado sobre el PDF unido, en un informe de 800 páginas, los
 // objetos de dibujo sumaban ~70 MB hasta el final (pico de 374 MB contra 286).
 // `paginas` (cuántas tiene cada parte) evita cargarlas dos veces para saber el total.
-export async function unirPartes(partes, titulo, paginas = null) {
+export async function unirPartes(partes, titulo, paginas = null, firma = null) {
   const conteos = paginas ?? [];
   if (!paginas) for (const parte of partes) conteos.push((await cargar(parte)).getPageCount());
   const total = conteos.reduce((suma, cantidad) => suma + cantidad, 0);
@@ -25,7 +25,7 @@ export async function unirPartes(partes, titulo, paginas = null) {
     documento.getPages().forEach((pagina, i) => {
       const numero = previas + i + 1;
       if (numero === 1) return;
-      const texto = textoDelPie(fecha, numero, total);
+      const texto = textoDelPie(fecha, numero, total, firma);
       pagina.drawText(texto, {
         x: (pagina.getWidth() - fuente.widthOfTextAtSize(texto, 8)) / 2,
         y: 30,

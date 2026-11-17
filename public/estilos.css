@@ -145,6 +145,15 @@ textarea {
   color: var(--error);
 }
 
+.tarjeta p.muestra {
+  font-size: 0.875rem;
+  text-align: center;
+}
+
+.tarjeta p.muestra a {
+  color: var(--acento);
+}
+
 .tarjeta label {
   font-size: 0.875rem;
   color: var(--texto-suave);

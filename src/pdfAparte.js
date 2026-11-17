@@ -117,7 +117,7 @@ export function crearGeneradorAparte({
       paginas.unshift(portada.paginas);
       const unido = await enProceso({
         tarea: "unir",
-        datos: { partes: rutas, titulo: datos.titulo, paginas },
+        datos: { partes: rutas, titulo: datos.titulo, paginas, firma: datos.firma },
       });
       return Buffer.from(unido);
     } finally {

@@ -14,7 +14,9 @@ export function nombreDeArchivo(tema) {
   return `${base || "informe"}.pdf`;
 }
 
-export const textoDelPie = (fecha, pagina, total) => `Generado el ${fecha} · ${pagina} / ${total}`;
+// `firma` (opcional) atribuye el informe, por ejemplo en el de muestra público.
+export const textoDelPie = (fecha, pagina, total, firma = null) =>
+  `Generado el ${fecha}${firma ? ` por ${firma}` : ""} · ${pagina} / ${total}`;
 export const fechaDelPie = () => new Date().toLocaleDateString("es-AR");
 
 // El título del informe va en la portada: se saca del cuerpo para no repetirlo.

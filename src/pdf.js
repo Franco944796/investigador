@@ -506,11 +506,11 @@ export async function generarPortada({ titulo, titulos }) {
 
 // Todo en un proceso (informes cortos y pruebas). Los largos se arman por partes en
 // src/pdfAparte.js, con estas mismas piezas.
-export async function generarPDF({ titulo, markdown, fuentes }) {
+export async function generarPDF({ titulo, markdown, fuentes, firma }) {
   const separado = separarTitulo(sinPendientes(markdown));
   const cuerpo = await generarCuerpo({ markdown: separado.cuerpo, fuentes });
   const portada = await generarPortada({ titulo: separado.titulo ?? titulo, titulos: cuerpo.titulos });
-  return unirPartes([portada.pdf, cuerpo.pdf], titulo, [portada.paginas, cuerpo.paginas]);
+  return unirPartes([portada.pdf, cuerpo.pdf], titulo, [portada.paginas, cuerpo.paginas], firma);
 }
 
 // El servidor las importa de titulos.js para no cargar las fuentes del PDF en su memoria.

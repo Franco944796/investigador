@@ -60,3 +60,30 @@ test("PDF: portada e índice con la página de cada sección y subsección", asy
   const documento = await PDFDocument.load(pdf);
   assert.equal(documento.getPageCount(), 2 + cuerpo.paginas, "portada + una página de índice + cuerpo");
 });
+
+test("PDF: con firma, el pie de cada página (menos la portada) la nombra; sin firma, no", async () => {
+  const { writeFile, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { extraerTextoPDF } = await import("../src/extraerPDF.js");
+  const seccion = (k) => `## Sección ${k}\n\n${"Texto de la sección con una cita [1]. ".repeat(60)}\n`;
+  const markdown = `# Informe\n\n${[1, 2, 3].map(seccion).join("\n")}`;
+  const firma = "https://github.com/ejemplo";
+  const ruta = join(tmpdir(), `prueba-firma-${process.pid}.pdf`);
+  const textoDe = async (pdf) => {
+    await writeFile(ruta, pdf);
+    return (await extraerTextoPDF({ ruta })).texto ?? "";
+  };
+  try {
+    for (const maxPorParte of [250000, 5000]) {
+      const generar = crearGeneradorAparte({ maxPorParte });
+      const firmado = await generar({ ...datos, markdown, firma });
+      const paginas = (await PDFDocument.load(firmado)).getPageCount();
+      const veces = (await textoDe(firmado)).split(`por ${firma}`).length - 1;
+      assert.equal(veces, paginas - 1, `una por página (partes de ${maxPorParte})`);
+      assert.ok(!(await textoDe(await generar({ ...datos, markdown }))).includes(firma));
+    }
+  } finally {
+    await rm(ruta, { force: true });
+  }
+});

@@ -15,6 +15,9 @@ import { direccionCorta, tituloLegible } from "./direcciones.js";
 const nombreDeFuente = (titulo, url) => (tituloLegible(titulo) ? titulo : direccionCorta(url));
 
 const id = new URLSearchParams(location.search).get("id");
+// La muestra pública (muestra.html) es una copia fija armada con scripts/muestra.js: se lee de un
+// archivo al lado, sin sesión ni servidor.
+const muestra = document.body.dataset.muestra;
 const documento = $("#documento");
 const indice = $("#indice");
 const vista = $("#vista-cita");
@@ -87,12 +90,16 @@ function portada(datos, titulo) {
         elemento("div", {}, elemento("dt", { textContent: nombre }), elemento("dd", { textContent: valor })),
       ),
     ),
-    elemento(
-      "details",
-      { className: "pedido" },
-      elemento("summary", { textContent: "Pedido original" }),
-      elemento("pre", { textContent: datos.tema }),
-    ),
+    ...(datos.tema
+      ? [
+          elemento(
+            "details",
+            { className: "pedido" },
+            elemento("summary", { textContent: "Pedido original" }),
+            elemento("pre", { textContent: datos.tema }),
+          ),
+        ]
+      : []),
   );
 }
 
@@ -326,59 +333,113 @@ async function actualizar() {
   seguirConsultando(datos);
 }
 
+const idDe = (texto) =>
+  texto
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "") || "seccion";
+
+// Cada sección del índice se abre sola mientras se la lee; lo que la persona abre o cierra a mano
+// queda así hasta que lo vuelva a tocar.
+const plegadoAMano = new Map();
+let marcarIndice = () => {};
+
 function armarIndice() {
   const usados = new Set();
   const lista = indice.querySelector("ol");
   lista.replaceChildren();
-  for (const titulo of documento.querySelectorAll("h2")) {
-    const base =
-      titulo.textContent
-        .toLowerCase()
-        .normalize("NFD")
-        .replace(/[̀-ͯ]/g, "")
-        .replace(/[^a-z0-9]+/g, "-")
-        .replace(/^-|-$/g, "") || "seccion";
+  const secciones = [];
+  for (const titulo of documento.querySelectorAll("h2, h3")) {
+    const base = idDe(titulo.textContent);
     let id = base;
     for (let n = 2; usados.has(id); n++) id = `${base}-${n}`;
     usados.add(id);
     titulo.id = id;
-    lista.append(elemento("li", {}, elemento("a", { href: `#${id}`, textContent: titulo.textContent })));
+    const enlace = elemento("a", { href: `#${id}`, textContent: titulo.textContent });
+    if (titulo.tagName === "H2") {
+      const item = elemento("li", {}, elemento("div", { className: "fila" }, enlace));
+      secciones.push({ titulo, enlace, item, sub: null, hijos: [] });
+      lista.append(item);
+    } else if (secciones.length) {
+      const seccion = secciones.at(-1);
+      if (!seccion.sub) {
+        seccion.sub = elemento("ol", { className: "sub", id: `sub-${seccion.titulo.id}` });
+        const boton = elemento("button", {
+          type: "button",
+          className: "plegar",
+          ariaLabel: `Subsecciones de ${seccion.titulo.textContent}`,
+        });
+        boton.setAttribute("aria-controls", seccion.sub.id);
+        boton.addEventListener("click", () => {
+          plegadoAMano.set(seccion.titulo.id, boton.getAttribute("aria-expanded") !== "true");
+          marcarIndice();
+        });
+        seccion.boton = boton;
+        seccion.item.querySelector(".fila").append(boton);
+        seccion.item.append(seccion.sub);
+      }
+      seccion.sub.append(elemento("li", {}, enlace));
+      seccion.hijos.push({ titulo, enlace });
+    }
   }
   indice.hidden = !lista.children.length;
   indice.querySelector("details").open = amplio.matches;
 
-  // Marca en el índice la última sección cuyo título ya pasó por arriba; se recalcula con cada
-  // scroll, así también acierta cuando se salta de golpe a otra parte.
-  const enlaces = new Map([...lista.querySelectorAll("a")].map((a) => [a.hash.slice(1), a]));
-  const titulos = [...documento.querySelectorAll("h2")];
-  const marcar = () => {
+  // Marca en el índice la última sección (y subsección) cuyo título ya pasó por arriba; se
+  // recalcula con cada scroll, así también acierta cuando se salta de golpe a otra parte.
+  let anterior = null;
+  marcarIndice = () => {
+    const titulos = secciones.flatMap((seccion) => [seccion, ...seccion.hijos]);
     let actual = titulos[0];
     for (const titulo of titulos) {
-      if (titulo.getBoundingClientRect().top < 120) actual = titulo;
+      if (titulo.titulo.getBoundingClientRect().top < 120) actual = titulo;
       else break;
     }
     // Al final de la página los últimos títulos no llegan arriba: se marca el último.
     if (innerHeight + scrollY >= document.documentElement.scrollHeight - 4) actual = titulos.at(-1);
-    for (const [clave, enlace] of enlaces) {
-      if (clave === actual?.id) enlace.setAttribute("aria-current", "true");
-      else enlace.removeAttribute("aria-current");
+    for (const seccion of secciones) {
+      const contiene = seccion === actual || seccion.hijos.includes(actual);
+      if (contiene) seccion.enlace.setAttribute("aria-current", "true");
+      else seccion.enlace.removeAttribute("aria-current");
+      for (const hijo of seccion.hijos) {
+        if (hijo === actual) hijo.enlace.setAttribute("aria-current", "true");
+        else hijo.enlace.removeAttribute("aria-current");
+      }
+      if (!seccion.sub) continue;
+      const abierta = plegadoAMano.get(seccion.titulo.id) ?? contiene;
+      seccion.sub.hidden = !abierta;
+      seccion.boton.setAttribute("aria-expanded", String(abierta));
     }
+    // El índice fijo tiene su propio scroll: se lo mueve para que lo marcado quede a la vista.
+    if (actual && actual !== anterior && amplio.matches) {
+      const caja = indice.getBoundingClientRect();
+      const visible = actual.enlace.checkVisibility()
+        ? actual.enlace
+        : secciones.find((seccion) => seccion.hijos.includes(actual)).enlace;
+      const marca = visible.getBoundingClientRect();
+      if (marca.top < caja.top + 48) indice.scrollTop -= caja.top + 48 - marca.top;
+      else if (marca.bottom > caja.bottom - 8) indice.scrollTop += marca.bottom - caja.bottom + 8;
+    }
+    anterior = actual;
   };
-  let pendiente = false;
-  addEventListener(
-    "scroll",
-    () => {
-      if (pendiente) return;
-      pendiente = true;
-      requestAnimationFrame(() => {
-        pendiente = false;
-        marcar();
-      });
-    },
-    { passive: true },
-  );
-  marcar();
+  marcarIndice();
 }
+
+let marcaPendiente = false;
+addEventListener(
+  "scroll",
+  () => {
+    if (marcaPendiente) return;
+    marcaPendiente = true;
+    requestAnimationFrame(() => {
+      marcaPendiente = false;
+      marcarIndice();
+    });
+  },
+  { passive: true },
+);
 
 // Vista previa de cada cita: con mouse aparece al pasar por encima y el clic lleva a la lista;
 // en pantallas táctiles el primer toque la muestra.
@@ -486,8 +547,9 @@ function armar(datos) {
   document.title = `${titulo} · Investigador`;
   armarIndice();
   seguirConsultando(datos);
-  $("#descargar-html").disabled = false;
-  $("#descargar-pdf").disabled = false;
+  for (const boton of document.querySelectorAll("#descargar-html, #descargar-pdf")) {
+    boton.disabled = false;
+  }
 }
 
 function mostrarAviso(mensaje) {
@@ -509,6 +571,8 @@ async function descargarHTML(boton) {
       if (fuente) cita.title = `${fuente.n}. ${fuente.titulo} — ${sitioDe(fuente.url)}`;
     }
     for (const nodo of hoja.querySelectorAll("[aria-current]")) nodo.removeAttribute("aria-current");
+    for (const boton of hoja.querySelectorAll(".plegar")) boton.remove();
+    for (const sub of hoja.querySelectorAll(".indice .sub")) sub.hidden = false;
     for (const nodo of hoja.querySelectorAll(".solo-pagina")) nodo.remove();
     const html = `<!doctype html>
 <html lang="es" data-tema="${document.documentElement.dataset.tema}">
@@ -533,7 +597,7 @@ ${hoja.outerHTML}
   }
 }
 
-$("#descargar-html").addEventListener("click", (evento) => descargarHTML(evento.currentTarget));
+$("#descargar-html")?.addEventListener("click", (evento) => descargarHTML(evento.currentTarget));
 // El tema inicial lo pone tema.js antes de pintar; acá se cambia y se recuerda.
 const raiz = document.documentElement;
 const rotularTema = () => {
@@ -547,6 +611,7 @@ $("#tema").addEventListener("click", () => {
 rotularTema();
 
 $("#descargar-pdf").addEventListener("click", async (evento) => {
+  if (muestra) return;
   const boton = evento.currentTarget;
   boton.disabled = true;
   mostrarAviso("");
@@ -559,7 +624,15 @@ $("#descargar-pdf").addEventListener("click", async (evento) => {
   }
 });
 
-if (!id) {
+if (muestra) {
+  try {
+    const respuesta = await fetch(muestra);
+    if (!respuesta.ok) throw new Error(respuesta.statusText);
+    armar(await respuesta.json());
+  } catch {
+    fallar("No se pudo cargar el informe de ejemplo.", true);
+  }
+} else if (!id) {
   fallar("Falta indicar qué investigación mostrar.", true);
 } else if (!hayToken()) {
   fallar("Entrá al investigador con tu código para ver este informe.", true);

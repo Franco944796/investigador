@@ -65,6 +65,7 @@ summary,
 .tabla,
 .vista-cita,
 .lista-fuentes,
+.aviso-muestra,
 figcaption,
 h1,
 h2,
@@ -139,6 +140,20 @@ a {
 .boton:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+a.boton {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+}
+
+.aviso-muestra {
+  max-width: var(--ancho);
+  margin: 16px auto 0;
+  padding: 0 16px;
+  color: var(--texto-suave);
+  font-size: 0.875rem;
 }
 
 .aviso {
@@ -552,6 +567,60 @@ a.cita:focus-visible {
   font-weight: 600;
 }
 
+.indice .fila {
+  display: flex;
+  align-items: stretch;
+}
+
+.indice .fila a {
+  flex: 1;
+  min-width: 0;
+}
+
+.indice .plegar {
+  flex: none;
+  width: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--texto-suave);
+  cursor: pointer;
+}
+
+.indice .plegar::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform 0.15s;
+}
+
+.indice .plegar[aria-expanded="true"]::before {
+  transform: rotate(45deg);
+}
+
+.indice .plegar:hover {
+  background: var(--acento-fondo);
+  color: var(--texto);
+}
+
+.indice .sub {
+  padding: 0 0 4px;
+}
+
+.indice .sub a {
+  padding: 3px 10px 3px 22px;
+  font-size: 0.8125rem;
+}
+
+.indice .sub a[aria-current="true"] {
+  font-weight: 500;
+}
+
 @media (max-width: 1099px) {
   .indice {
     border-bottom: 1px solid var(--borde);
@@ -564,6 +633,12 @@ a.cita:focus-visible {
     grid-template-columns: var(--indice) minmax(0, var(--ancho));
     gap: 48px;
     max-width: calc(var(--indice) + var(--ancho) + 80px);
+  }
+
+  /* Alineado con el informe, que empieza después del índice. */
+  .aviso-muestra {
+    max-width: calc(var(--indice) + var(--ancho) + 80px);
+    padding-left: calc(var(--indice) + 48px + 16px);
   }
 
   .indice {
@@ -598,6 +673,16 @@ a.cita:focus-visible {
     font-size: 1.25rem;
   }
 
+  /* KaTeX no corta las fórmulas en línea: las largas se salían de la pantalla. Como bloque en línea
+     con scroll, la base queda abajo; por eso se centran con el texto. */
+  .formula:not(.destacada) {
+    display: inline-block;
+    max-width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    vertical-align: middle;
+  }
+
   .herramientas {
     padding: 8px 12px;
   }
@@ -629,6 +714,7 @@ a.cita:focus-visible {
   }
 
   .herramientas,
+  .aviso-muestra,
   .indice,
   .vista-cita,
   .conexion,

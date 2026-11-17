@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="api" content="" />
+    <meta
+      name="description"
+      content="Ejemplo real de una investigación exhaustiva hecha con Investigador: informe con índice, citas, gráficos y fórmulas."
+    />
+    <title>Informe de ejemplo · Investigador</title>
+    <link rel="icon" href="logo.svg" type="image/svg+xml" />
+    <script src="tema.js"></script>
+    <link rel="stylesheet" href="informe.css" />
+  </head>
+  <body data-muestra="muestra/informe.json">
+    <header class="herramientas">
+      <a class="volver" href="./">← Investigador</a>
+      <div class="botones">
+        <button id="tema" type="button" class="boton">Modo oscuro</button>
+        <a id="descargar-pdf" class="boton" href="muestra/informe.pdf" download="informe-de-ejemplo.pdf">
+          Descargar PDF
+        </a>
+      </div>
+    </header>
+    <p class="aviso-muestra">
+      Informe de ejemplo: una investigación exhaustiva real hecha con Investigador, publicada tal como
+      la entregó.
+    </p>
+    <p id="aviso" class="aviso" role="alert" hidden></p>
+
+    <div class="hoja">
+      <nav id="indice" class="indice" aria-label="Índice" hidden>
+        <details>
+          <summary>Índice</summary>
+          <ol></ol>
+        </details>
+      </nav>
+      <article id="documento" class="documento">
+        <p class="estado">Cargando el informe…</p>
+      </article>
+    </div>
+
+    <div id="vista-cita" class="vista-cita" role="tooltip" hidden></div>
+
+    <script src="vendor/marked.js"></script>
+    <script src="vendor/purify.js"></script>
+    <script src="vendor/katex.js"></script>
+    <script type="module" src="informe.js"></script>
+  </body>
+</html>
