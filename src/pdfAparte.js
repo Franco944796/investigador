@@ -115,6 +115,6 @@ export function crearGeneradorAparte({
   };
   const generar = (datos) => enFila(() => armar(datos));
   // Usa la misma fila que los PDF: leer uno grande también pide memoria.
-  generar.extraerTexto = (bytes) => enFila(() => enProceso({ tarea: "texto", datos: { bytes } }));
+  generar.extraerTexto = (ruta) => enFila(() => enProceso({ tarea: "texto", datos: { ruta } }));
   return generar;
 }

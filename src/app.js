@@ -1,4 +1,10 @@
 import { randomUUID } from "node:crypto";
+import { createWriteStream } from "node:fs";
+import { rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { Transform } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
 import express from "express";
 import { crearConversacion, ErrorInvestigacion, normalizarUrl } from "./investigador.js";
@@ -180,6 +186,27 @@ function desdeRegistro(registro) {
 
 const PDFS_GUARDADOS = 3;
 const MINIMO_AGREGADO = 200;
+const MAX_PDF_SUBIDO = 50 * 1024 * 1024;
+
+// El PDF subido va directo a un archivo temporal mientras llega: guardado en memoria, uno de 50 MB
+// (más su copia al proceso que lo lee) dejaba al servidor al borde de los 512 MB de Render.
+async function guardarSubida(req, limite) {
+  const ruta = join(tmpdir(), `investigador-${randomUUID()}.pdf`);
+  let bytes = 0;
+  const contar = new Transform({
+    transform(trozo, codificacion, listo) {
+      bytes += trozo.length;
+      listo(bytes > limite ? Object.assign(new Error("PDF demasiado grande"), { status: 413 }) : null, trozo);
+    },
+  });
+  try {
+    await pipeline(req, contar, createWriteStream(ruta));
+  } catch (error) {
+    await rm(ruta, { force: true });
+    throw error;
+  }
+  return { ruta, bytes };
+}
 
 // Fuentes que todavía no están en el informe (agregadas a mano después de redactarlo).
 const paraRehacer = (conversacion) =>
@@ -525,11 +552,10 @@ export function crearApp({
     "/api/conversaciones/:id/pendientes",
     exigirSesion,
     express.json({ limit: "5mb" }),
-    express.raw({ type: "application/pdf", limit: "20mb" }),
     async (req, res) => {
       const conversacion = await cargar(req, res, req.params.id);
       if (!conversacion) return;
-      const esPDF = Buffer.isBuffer(req.body);
+      const esPDF = Boolean(req.is("application/pdf"));
       const url = esPDF ? req.query.url : req.body?.url;
       const iguales = (conversacion.pendientes ?? []).filter((pendiente) => pendiente.url === url);
       if (!iguales.length) {
@@ -546,10 +572,25 @@ export function crearApp({
         return res.status(409).json({ error: "Esa fuente ya se agregó." });
       }
       const texto = esPDF ? null : typeof req.body?.texto === "string" ? req.body.texto.trim() : "";
-      if (esPDF ? !req.body.length : texto.length < MINIMO_AGREGADO) {
+      if (!esPDF && texto.length < MINIMO_AGREGADO) {
         return res.status(400).json({
           error: `Pegá el texto de la fuente (al menos ${MINIMO_AGREGADO} caracteres) o subí su PDF.`,
         });
+      }
+      let subido = null;
+      if (esPDF) {
+        try {
+          subido = await guardarSubida(req, MAX_PDF_SUBIDO);
+        } catch (error) {
+          if (error.status === 413) {
+            return res.status(413).json({ error: "El PDF pasa de 50 MB: copiá su texto y pegalo." });
+          }
+          throw error;
+        }
+        if (!subido.bytes) {
+          await rm(subido.ruta, { force: true });
+          return res.status(400).json({ error: "El PDF llegó vacío." });
+        }
       }
       const marcar = (datos) => {
         for (const pendiente of iguales) {
@@ -563,7 +604,7 @@ export function crearApp({
       try {
         let contenido = texto;
         if (esPDF) {
-          contenido = (await extraerTextoPDF(req.body)).texto.trim();
+          contenido = (await extraerTextoPDF(subido.ruta)).texto.trim();
           if (contenido.length < MINIMO_AGREGADO) {
             throw new ErrorPDF(
               "El PDF no tiene texto que se pueda leer (puede ser un escaneo): copiá su texto y pegalo.",
@@ -594,6 +635,7 @@ export function crearApp({
         });
       } finally {
         analizando.delete(clave);
+        if (subido) await rm(subido.ruta, { force: true });
         guardar(conversacion);
       }
     },

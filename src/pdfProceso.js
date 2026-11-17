@@ -5,7 +5,7 @@ const TAREAS = {
   cuerpo: async (datos) => (await import("./pdf.js")).generarCuerpo(datos),
   portada: async (datos) => (await import("./pdf.js")).generarPortada(datos),
   unir: async ({ partes, titulo }) => (await import("./unirPDF.js")).unirPartes(partes, titulo),
-  texto: async ({ bytes }) => (await import("./extraerPDF.js")).extraerTextoPDF(bytes),
+  texto: async (datos) => (await import("./extraerPDF.js")).extraerTextoPDF(datos),
 };
 
 process.once("message", async ({ tarea, datos }) => {

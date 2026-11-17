@@ -4,14 +4,16 @@
 // normal, ~12 MB, y en Node 22+ extrae el texto igual (avisa por consola que no es la legacy).
 const MAXIMO = 600000;
 
-export async function extraerTextoPDF(bytes) {
+// Se lee desde el archivo en disco y no desde memoria: pdf.js lo va pidiendo por partes. Con un
+// PDF de 50 MB, el proceso llega a ~200 MB en vez de ~290.
+export async function extraerTextoPDF({ ruta }) {
   const pdfjs = await import("pdfjs-dist/build/pdf.mjs");
   pdfjs.GlobalWorkerOptions.workerSrc ||= new URL(
     "../node_modules/pdfjs-dist/build/pdf.worker.mjs",
     import.meta.url,
   ).href;
   const documento = await pdfjs.getDocument({
-    data: new Uint8Array(bytes),
+    url: ruta,
     isEvalSupported: false,
     disableFontFace: true,
     verbosity: 0,

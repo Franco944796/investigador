@@ -144,7 +144,7 @@ function listaDeFuentes(citadas) {
 // puede agregar su contenido (texto o PDF) y rehacer el informe con lo agregado. Los botones y
 // formularios llevan .solo-pagina: no van en el HTML descargado ni al imprimir.
 const SIN_ACCESO = "sin acceso al contenido";
-const MAX_PDF = 20 * 1024 * 1024;
+const MAX_PDF = 50 * 1024 * 1024;
 const rutaDe = (final) => `/api/conversaciones/${encodeURIComponent(id)}${final}`;
 let seccionPendientes = null;
 let consulta = null;
@@ -160,7 +160,7 @@ function estadoDePendiente({ estado, fuente, mensaje }) {
 
 async function enviarContenido(url, texto, archivo) {
   if (archivo) {
-    if (archivo.size > MAX_PDF) throw new Error("El PDF pasa de 20 MB: copiá su texto y pegalo.");
+    if (archivo.size > MAX_PDF) throw new Error("El PDF pasa de 50 MB: copiá su texto y pegalo.");
     const respuesta = await conEspera(
       () =>
         fetch(`${API}${rutaDe("/pendientes")}?url=${encodeURIComponent(url)}`, {
@@ -192,7 +192,7 @@ function formularioDeContenido(url, alCancelar) {
     "form",
     { className: "agregar-contenido solo-pagina" },
     texto,
-    elemento("label", {}, "o subí su PDF (hasta 20 MB): ", archivo),
+    elemento("label", {}, "o subí su PDF (hasta 50 MB): ", archivo),
     error,
     elemento("div", { className: "botones-pendiente" }, agregar, cancelar),
   );
