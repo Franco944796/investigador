@@ -453,8 +453,8 @@ export async function generarCuerpo({ markdown, fuentes }) {
 const fechaLarga = () =>
   new Date().toLocaleDateString("es-AR", { day: "numeric", month: "long", year: "numeric" });
 
-// Portada e índice. Los números del índice dependen de cuántas páginas ocupa el propio índice:
-// se arma una vez para contarlas y, si no coincidía con lo supuesto, otra vez.
+// Portada e índice ({ pdf, paginas }). Los números del índice dependen de cuántas páginas ocupa el
+// propio índice: se arma una vez para contarlas y, si no coincidía con lo supuesto, otra vez.
 export async function generarPortada({ titulo, titulos }) {
   const armar = async (previas) => {
     let paginas = 0;
@@ -501,7 +501,7 @@ export async function generarPortada({ titulo, titulos }) {
     previas = armado.paginas;
     armado = await armar(previas);
   }
-  return armado.pdf;
+  return armado;
 }
 
 // Todo en un proceso (informes cortos y pruebas). Los largos se arman por partes en
@@ -510,7 +510,7 @@ export async function generarPDF({ titulo, markdown, fuentes }) {
   const separado = separarTitulo(sinPendientes(markdown));
   const cuerpo = await generarCuerpo({ markdown: separado.cuerpo, fuentes });
   const portada = await generarPortada({ titulo: separado.titulo ?? titulo, titulos: cuerpo.titulos });
-  return unirPartes([portada, cuerpo.pdf], titulo);
+  return unirPartes([portada.pdf, cuerpo.pdf], titulo, [portada.paginas, cuerpo.paginas]);
 }
 
 // El servidor las importa de titulos.js para no cargar las fuentes del PDF en su memoria.

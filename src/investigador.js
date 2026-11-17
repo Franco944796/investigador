@@ -627,7 +627,6 @@ export function crearInvestigador({
       buscada: false,
       ronda: 0,
       rondasVacias: 0,
-      tandasLibresVacias: 0,
       sinAporte: { pagas: 0, libres: 0 },
       terminados: [],
     });
@@ -638,11 +637,12 @@ export function crearInvestigador({
       const { destinos } = conversacion;
       const clave = libres ? "libres" : "pagas";
       const maximo = libres ? maxLibres : maxPagas;
-      const minimo = libres ? (opciones.minAcademicas ?? maximo) : (opciones.minBusquedas ?? 0);
+      // Papers y libros no tienen mínimo: siguen hasta el tope salvo que sus últimas
+      // `papersSinAporte` (100) búsquedas seguidas no aporten nada (Franco, 2026-11-16).
+      const minimo = libres ? 0 : (opciones.minBusquedas ?? 0);
       if (libres && !(destinos.academico || destinos.libros)) return "no-pedidas";
-      if (libres && destinos.libresAgotados) return "sin-resultados";
       if (hechas(libres) >= maximo) return libres && maximo < (opciones.maxAcademicas ?? Infinity) ? "saldo" : "tope";
-      const limite = opciones.busquedasSinAporte ?? 0;
+      const limite = (libres ? opciones.papersSinAporte : opciones.busquedasSinAporte) ?? 0;
       if (limite > 0 && hechas(libres) >= minimo && sinAporte[clave] >= limite) return "sin-aporte";
       return null;
     };
@@ -719,7 +719,7 @@ export function crearInvestigador({
         tope: () => `Se usaron las ${hechas(true)} búsquedas de papers y libros previstas`,
         saldo: () => `Se usaron las ${hechas(true)} búsquedas de papers y libros que permitía el saldo de hoy de OpenAlex`,
         "sin-aporte": () =>
-          `Las últimas ${opciones.busquedasSinAporte} búsquedas de papers y libros no aportaron información nueva (van ${hechas(true)})`,
+          `Las últimas ${opciones.papersSinAporte} búsquedas de papers y libros no aportaron información nueva (van ${hechas(true)})`,
       },
     };
     // Avisa una vez cuando un presupuesto termina; si el otro sigue, la investigación continúa.
@@ -754,18 +754,6 @@ export function crearInvestigador({
         destinos.sitiosAgotados = true;
         emitir("aviso", {
           texto: "Los sitios indicados ya no traen resultados nuevos: sigo buscando en toda la web.",
-        });
-      }
-      if (tanda.libres.length) {
-        progreso.tandasLibresVacias = sinNuevas("libres") ? progreso.tandasLibresVacias + 1 : 0;
-      }
-      if (progreso.tandasLibresVacias >= 2 && !destinos.libresAgotados) {
-        destinos.libresAgotados = true;
-        progreso.terminados.push("libres");
-        emitir("aviso", {
-          texto: finDe(false)
-            ? "Papers y libros ya no traen resultados nuevos."
-            : "Papers y libros ya no traen resultados nuevos: sigo solo con la web.",
         });
       }
       avisarFines();
@@ -857,6 +845,19 @@ export function crearInvestigador({
         // Sin fuentes tras la primera tanda no hay de dónde seguir; al retomar, en cambio, la
         // primera tanda pudo cortarse antes de leer nada, y se sigue con las rondas.
         if (!conversacion.fuentes.length && !retomando) break;
+        // El saldo de OpenAlex se renueva cada día: una investigación larga puede cruzar la
+        // renovación y seguir con papers hasta su tope, en vez de quedarse con el saldo del inicio.
+        const actual = saldoAcademico ? await saldoAcademico().catch(() => null) : null;
+        if (actual) {
+          const antes = finDe(true);
+          maxLibres = Math.min(opciones.maxAcademicas ?? Infinity, hechas(true) + actual.busquedas);
+          if (antes === "saldo" && !finDe(true)) {
+            progreso.terminados = progreso.terminados.filter((clave) => clave !== "libres");
+            emitir("aviso", {
+              texto: `Se renovó el saldo de OpenAlex: sigo con papers y libros (hoy quedan ${actual.busquedas}).`,
+            });
+          }
+        }
         const cupos = cuposDe(
           opciones.consultasPorRonda,
           opciones.academicasPorRonda ?? opciones.consultasPorRonda,

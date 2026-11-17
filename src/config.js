@@ -81,20 +81,22 @@ export function leerConfig(env = process.env) {
     investigacion: {
       consultasIniciales: entero(env, "CONSULTAS_INICIALES", 25),
       resultadosPorConsulta: entero(env, "RESULTADOS_POR_CONSULTA", 8),
-      // Tope de seguridad: lo que corta son los presupuestos de búsquedas (500 de papers a 16 por
-      // ronda ya son 30 rondas).
+      // Tope de seguridad: lo que corta son los presupuestos de búsquedas (1.000 de papers a 16 por
+      // ronda ya son ~60 rondas).
       rondasExtra: entero(env, "RONDAS_EXTRA", 100),
       consultasPorRonda: entero(env, "CONSULTAS_POR_RONDA", 8),
       maxBusquedas: entero(env, "MAX_BUSQUEDAS", 100),
       // Papers y libros van a OpenAlex, que no gasta Tavily: tienen su propio tope por investigación.
-      maxAcademicas: entero(env, "MAX_ACADEMICAS", 500),
+      // 1.000 = todo el saldo diario de OpenAlex (se renueva cada día; Franco, 2026-11-16).
+      maxAcademicas: entero(env, "MAX_ACADEMICAS", 1000),
       academicasIniciales: entero(env, "ACADEMICAS_INICIALES", 20),
       academicasPorRonda: entero(env, "ACADEMICAS_POR_RONDA", 16),
-      // Pasado cada mínimo, ese presupuesto termina cuando sus últimas BUSQUEDAS_SIN_APORTE
-      // búsquedas seguidas no aportan ninguna fuente (decisión de Franco, 2026-11-16).
+      // Web: pasadas MIN_BUSQUEDAS, termina cuando sus últimas BUSQUEDAS_SIN_APORTE búsquedas
+      // seguidas no aportan ninguna fuente. Papers y libros, sin mínimo: cuando lo hacen sus
+      // últimas PAPERS_SIN_APORTE (decisiones de Franco, 2026-11-16).
       minBusquedas: entero(env, "MIN_BUSQUEDAS", 60),
-      minAcademicas: entero(env, "MIN_ACADEMICAS", 500),
       busquedasSinAporte: entero(env, "BUSQUEDAS_SIN_APORTE", 20),
+      papersSinAporte: entero(env, "PAPERS_SIN_APORTE", 100),
       // 0 = sin tope.
       maxFuentes: entero(env, "MAX_FUENTES", 0) || Infinity,
       multilingue: true,

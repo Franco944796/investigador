@@ -1,4 +1,8 @@
 import { fork } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { separarTitulo, sinPendientes } from "./titulos.js";
 
 export class ErrorPDF extends Error {}
@@ -84,29 +88,41 @@ export function crearGeneradorAparte({
     if (partes.length === 1) {
       return Buffer.from(await enProceso({ tarea: "armar", datos }));
     }
-    const pdfs = [];
+    // Cada parte (y la portada) va a un archivo temporal: así no pasan todas juntas por memoria.
+    const base = join(tmpdir(), `investigador-pdf-${randomUUID()}`);
+    const rutas = [];
+    const paginas = [];
     const titulos = [];
     let previas = 0;
-    for (const markdown of partes) {
-      const parte = await enProceso({
-        tarea: "cuerpo",
-        datos: { markdown, fuentes: datos.fuentes },
+    try {
+      for (const [k, markdown] of partes.entries()) {
+        const salida = `${base}-${k + 1}.pdf`;
+        rutas.push(salida);
+        const parte = await enProceso({
+          tarea: "cuerpo",
+          datos: { markdown, fuentes: datos.fuentes, salida },
+        });
+        titulos.push(
+          ...parte.titulos.map((titulo) => ({ ...titulo, pagina: titulo.pagina + previas })),
+        );
+        paginas.push(parte.paginas);
+        previas += parte.paginas;
+      }
+      const salida = `${base}-0.pdf`;
+      rutas.unshift(salida);
+      const portada = await enProceso({
+        tarea: "portada",
+        datos: { titulo: separado.titulo ?? datos.titulo, titulos, salida },
       });
-      pdfs.push(parte.pdf);
-      titulos.push(
-        ...parte.titulos.map((titulo) => ({ ...titulo, pagina: titulo.pagina + previas })),
-      );
-      previas += parte.paginas;
+      paginas.unshift(portada.paginas);
+      const unido = await enProceso({
+        tarea: "unir",
+        datos: { partes: rutas, titulo: datos.titulo, paginas },
+      });
+      return Buffer.from(unido);
+    } finally {
+      await Promise.all(rutas.map((ruta) => rm(ruta, { force: true })));
     }
-    const portada = await enProceso({
-      tarea: "portada",
-      datos: { titulo: separado.titulo ?? datos.titulo, titulos },
-    });
-    const unido = await enProceso({
-      tarea: "unir",
-      datos: { partes: [portada, ...pdfs], titulo: datos.titulo },
-    });
-    return Buffer.from(unido);
   };
   const enFila = (tarea) => {
     const resultado = fila.then(tarea);

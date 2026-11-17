@@ -328,7 +328,7 @@ test("con tope de búsquedas, las rondas se recortan y termina al agotarlas", as
   assert.match(eventos.find((e) => e.tipo === "aviso").datos.texto, /las 6 búsquedas web previstas/);
 });
 
-test("sitios y papers: cada uno con su cupo, y se dejan cuando ya no traen páginas nuevas", async () => {
+test("sitios y papers: cada uno con su cupo; los sitios se dejan sin páginas nuevas, los papers no", async () => {
   const web = [];
   const enSitios = [];
   const academicas = [];
@@ -372,13 +372,14 @@ test("sitios y papers: cada uno con su cupo, y se dejan cuando ya no traen pági
   // Cada ronda pide el resto del cupo una vez (r2, r4, r6 son esos pedidos).
   assert.deepEqual(web, ["web 1", "web 2", "web r1", "web r3", "web r4", "web r5", "web r6"]);
   // Sin destino indicado, las dirigidas se turnan entre papers y sitios; agotados los sitios, van a papers.
-  assert.deepEqual(academicas, ["paper 1", "dirigida r1", "dirigida r3", "dirigida r4"]);
+  // Aunque siempre traen el mismo paper, siguen: solo los corta una racha larga sin aporte.
+  assert.deepEqual(academicas, ["paper 1", "dirigida r1", "dirigida r3", "dirigida r4", "dirigida r5", "dirigida r6"]);
   assert.deepEqual(enSitios, ["sitio 1", "web r2"], "una web que sobra completa el cupo de los sitios");
   const avisos = eventos.filter((e) => e.tipo === "aviso").map((e) => e.datos.texto);
   assert.equal(avisos[0], "La mitad de las búsquedas web va a: who.int.");
   assert.match(avisos[1], /^Además busco artículos académicos \(OpenAlex, en lugar de Google Scholar\): hasta/);
   assert.ok(avisos.some((texto) => /sitios indicados ya no traen resultados nuevos/.test(texto)));
-  assert.ok(avisos.some((texto) => /Papers y libros ya no traen resultados nuevos/.test(texto)));
+  assert.ok(!avisos.some((texto) => /Papers y libros ya no traen/.test(texto)));
   assert.ok(revisiones[0].includes('con destino "sitios"'));
   assert.ok(!revisiones.at(-1).includes('con destino "sitios"'), "agotados los sitios, ya no se piden");
   const destinos = eventos.filter((e) => e.tipo === "consulta").map((e) => e.datos.destino ?? "web");
@@ -685,7 +686,8 @@ test("papers tienen su propio tope, limitado por el saldo de hoy, y siguen cuand
       academicasIniciales: 1,
       academicasPorRonda: 1,
     },
-    saldoAcademico: async () => ({ busquedas: 3, renuevaEnSegundos: 7200 }),
+    // Como el de verdad: lo que queda baja con cada búsqueda.
+    saldoAcademico: async () => ({ busquedas: 3 - papers.length, renuevaEnSegundos: 7200 }),
     buscar: async (consulta) => {
       web.push(consulta);
       return { resultados: [{ titulo: consulta, url: `https://a.test/${encodeURIComponent(consulta)}`, contenido: LARGO }] };
@@ -872,4 +874,91 @@ test("retomar: si ya había terminado de buscar, solo vuelve a redactar", async 
     "Retomo la investigación: las búsquedas ya estaban terminadas (1 búsqueda web); vuelvo a redactar el informe (1 fuente leída).",
   ]);
   assert.ok(eventos.some((e) => e.tipo === "texto"));
+});
+
+test("si el saldo de OpenAlex se renueva a mitad de la investigación, sigue con papers hasta el tope", async () => {
+  const papers = [];
+  let revisiones = 0;
+  const investigador = crearInvestigador({
+    llm: {
+      ...llmFijo,
+      completarJSON: async (mensajes) => {
+        if (!mensajes.at(-1).content.includes("La investigación sigue")) {
+          return { consultas: ["uno web", "dos web"], dirigidas: [{ texto: "tema0x detalle0y", destino: "academico" }] };
+        }
+        revisiones++;
+        return { consultas: [], dirigidas: [{ texto: `tema${revisiones}x detalle${revisiones}y`, destino: "academico" }] };
+      },
+    },
+    opciones: {
+      ...OPCIONES,
+      consultasIniciales: 2,
+      rondasExtra: 20,
+      maxBusquedas: 2,
+      maxAcademicas: 5,
+      academicasIniciales: 1,
+      academicasPorRonda: 1,
+    },
+    // Quedan 2 en el día; al gastarlas, se renueva con 10.
+    saldoAcademico: async () =>
+      papers.length >= 2 ? { busquedas: 10 - (papers.length - 2) } : { busquedas: 2 - papers.length },
+    buscar: async (consulta) => ({
+      resultados: [{ titulo: consulta, url: `https://a.test/${encodeURIComponent(consulta)}`, contenido: LARGO }],
+    }),
+    buscarAcademico: async (consulta) => {
+      papers.push(consulta);
+      return { resultados: [{ titulo: consulta, url: `https://doi.org/${encodeURIComponent(consulta)}`, contenido: LARGO }] };
+    },
+    leerPagina: async () => assert.fail("no hace falta leer"),
+  });
+  const eventos = [];
+  await investigador.investigar(crearConversacion("id", "ana", "Pregunta: x\nFuentes: papers"), flujoDe(eventos));
+  assert.equal(papers.length, 5, "llega al tope aunque al empezar solo quedaban 2");
+  const avisos = eventos.filter((e) => e.tipo === "aviso").map((e) => e.datos.texto);
+  assert.ok(avisos.includes("Se renovó el saldo de OpenAlex: sigo con papers y libros (hoy quedan 10)."));
+  assert.ok(avisos.some((texto) => /^Se usaron las 5 búsquedas de papers y libros previstas/.test(texto)));
+});
+
+test("papers: se dejan solo tras N búsquedas seguidas sin aporte, sin mínimo", async () => {
+  const papers = [];
+  let revisiones = 0;
+  const investigador = crearInvestigador({
+    llm: {
+      ...llmFijo,
+      completarJSON: async (mensajes) => {
+        if (!mensajes.at(-1).content.includes("La investigación sigue")) {
+          return { consultas: ["uno web"], dirigidas: [{ texto: "tema0x detalle0y", destino: "academico" }] };
+        }
+        revisiones++;
+        return { consultas: [], dirigidas: [{ texto: `tema${revisiones}x detalle${revisiones}y`, destino: "academico" }] };
+      },
+      completar: async (mensajes) =>
+        mensajes.at(-1).content.includes("doi.org/vacio") ? "IRRELEVANTE" : "Notas útiles.",
+    },
+    opciones: {
+      ...OPCIONES,
+      consultasIniciales: 1,
+      rondasExtra: 30,
+      maxBusquedas: 1,
+      maxAcademicas: 50,
+      academicasIniciales: 1,
+      academicasPorRonda: 1,
+      papersSinAporte: 3,
+    },
+    buscar: async (consulta) => ({
+      resultados: [{ titulo: consulta, url: `https://a.test/${encodeURIComponent(consulta)}`, contenido: LARGO }],
+    }),
+    // Los dos primeros aportan; después ninguno.
+    buscarAcademico: async (consulta) => {
+      papers.push(consulta);
+      const url = papers.length <= 2 ? `https://doi.org/${papers.length}` : `https://doi.org/vacio-${papers.length}`;
+      return { resultados: [{ titulo: consulta, url, contenido: LARGO }] };
+    },
+    leerPagina: async () => assert.fail("no hace falta leer"),
+  });
+  const eventos = [];
+  await investigador.investigar(crearConversacion("id", "ana", "Pregunta: x\nFuentes: papers"), flujoDe(eventos));
+  assert.equal(papers.length, 5, "2 que aportan + 3 seguidas sin aporte");
+  const avisos = eventos.filter((e) => e.tipo === "aviso").map((e) => e.datos.texto);
+  assert.ok(avisos.includes("Las últimas 3 búsquedas de papers y libros no aportaron información nueva (van 5)."));
 });

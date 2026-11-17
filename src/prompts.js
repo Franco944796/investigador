@@ -148,20 +148,41 @@ No agregues nada que no esté en la página. Omite lo que el pedido indique excl
 }
 
 // Lo que rindió cada búsqueda, para que la revisión no insista con lo que no trae nada.
+// Con más de mil búsquedas, la lista entera pasaba de 100.000 caracteres: las últimas van con lo
+// que rindió cada una y las anteriores solo con su texto (para no repetirlas), hasta un tope.
+const DETALLADAS = 150;
+const MAX_ANTERIORES = 30000;
+
 function consultasHechas(conversacion) {
-  return conversacion.consultas
-    .map((texto, i) => {
-      const registro = conversacion.rendimiento?.[i];
-      if (!registro) return `- ${texto}`;
-      const donde = [registro.destino, registro.idioma].filter(Boolean).join("·");
-      const resultado = registro.fallo
-        ? "falló"
-        : registro.nuevas
-          ? `${registro.leidas} útiles de ${registro.nuevas} páginas nuevas`
-          : "sin páginas nuevas";
-      return `- [${donde}] ${texto} → ${resultado}`;
-    })
-    .join("\n");
+  const total = conversacion.consultas.length;
+  const desde = Math.max(0, total - DETALLADAS);
+  let anteriores = "";
+  let omitidas = 0;
+  for (const texto of conversacion.consultas.slice(0, desde)) {
+    if (anteriores.length + texto.length > MAX_ANTERIORES) omitidas++;
+    else anteriores += `${anteriores ? "; " : ""}${texto}`;
+  }
+  const resumen = desde
+    ? `Búsquedas anteriores (${desde}, solo el texto${omitidas ? `; ${omitidas} más sin mostrar` : ""}): ${anteriores}\n\nÚltimas búsquedas y lo que rindió cada una:\n`
+    : "";
+  return (
+    resumen +
+    conversacion.consultas
+      .slice(desde)
+      .map((texto, j) => {
+        const i = desde + j;
+        const registro = conversacion.rendimiento?.[i];
+        if (!registro) return `- ${texto}`;
+        const donde = [registro.destino, registro.idioma].filter(Boolean).join("·");
+        const resultado = registro.fallo
+          ? "falló"
+          : registro.nuevas
+            ? `${registro.leidas} útiles de ${registro.nuevas} páginas nuevas`
+            : "sin páginas nuevas";
+        return `- [${donde}] ${texto} → ${resultado}`;
+      })
+      .join("\n")
+  );
 }
 
 // Por cada subpregunta: cuántas fuentes la responden, cuántas son sólidas y una muestra de notas.
@@ -340,14 +361,19 @@ const RESPETAR_PEDIDO =
 
 export function promptIndice(conversacion) {
   const total = conversacion.fuentes.length || 1;
-  const recorte = Math.max(60, Math.min(160, Math.floor(MAX_INDICE / total) - 90));
+  // Cada línea entra en su parte de MAX_INDICE: con miles de fuentes, el índice ve el comienzo del
+  // título y nada de las notas (antes cada una tenía al menos 60 caracteres de notas más el
+  // título, y con 2.500 fuentes pasaba de 400.000 caracteres). Las fuentes se ubican después.
+  const porLinea = Math.max(40, Math.floor(MAX_INDICE / total));
+  const recorte = Math.max(0, Math.min(160, porLinea - 90));
   const maximo = Math.min(40, Math.max(14, Math.ceil(total / 30)));
   // Con pocas fuentes, seis secciones quedan casi vacías y cada una cuesta una llamada.
   const minimo = Math.min(6, Math.max(2, Math.ceil(total / 6)));
   const resumenes = conversacion.fuentes
     .map((fuente) => {
       const responde = fuente.aspectos?.length ? ` (subpreguntas ${fuente.aspectos.join(", ")})` : "";
-      return `[${fuente.n}]${responde} ${fuente.titulo}: ${fuente.notas.slice(0, recorte)}`;
+      const linea = `[${fuente.n}]${responde} ${fuente.titulo}: ${fuente.notas.slice(0, recorte)}`;
+      return linea.slice(0, porLinea);
     })
     .join("\n");
   const subpreguntas = conversacion.aspectos?.length
