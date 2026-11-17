@@ -13,7 +13,7 @@ import {
 } from "./src/busqueda.js";
 import { leerConfig } from "./src/config.js";
 import { crearInvestigador } from "./src/investigador.js";
-import { leerPagina } from "./src/lector.js";
+import { enlaceVivo, leerPagina } from "./src/lector.js";
 import { crearLLM } from "./src/llm.js";
 import { crearGeneradorAparte } from "./src/pdfAparte.js";
 
@@ -73,6 +73,7 @@ const investigador = crearInvestigador({
   buscarLibros,
   saldoAcademico: () => saldoDeOpenAlex(config.openalexClave),
   leerPagina,
+  enlaceVivo,
   opciones: config.investigacion,
 });
 

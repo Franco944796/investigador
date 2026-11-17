@@ -132,6 +132,31 @@ export function extraerTexto(html) {
   return { titulo: tituloPagina.trim(), texto: ordenar(respaldo.body?.textContent ?? "") };
 }
 
+// Caído = el sitio dice que la página no existe, el dominio no existe o su certificado es de otro
+// dominio (sitio mudado). Un 403, 429 o 5xx suele ser un bloqueo a robots, y un corte de conexión
+// puede ser de la red o un bloqueo por país (diva-portal.org no conecta desde Argentina): no cuentan.
+const ESTADOS_DE_CAIDA = new Set([404, 410]);
+const ERRORES_DE_CAIDA = new Set(["ENOTFOUND", "ERR_TLS_CERT_ALTNAME_INVALID"]);
+
+function esCaida(error) {
+  const causa = error.cause ?? error;
+  return [causa, ...(causa.errors ?? [])].some((e) => ERRORES_DE_CAIDA.has(e?.code));
+}
+
+const caido = (mensaje) => Object.assign(new Error(mensaje), { caido: true });
+
+export async function enlaceVivo(url, { signal } = {}) {
+  try {
+    const limite = AbortSignal.any([signal, AbortSignal.timeout(LIMITE_MS)].filter(Boolean));
+    const respuesta = await descargar(url, limite, "*/*");
+    await respuesta.body?.cancel();
+    return !ESTADOS_DE_CAIDA.has(respuesta.status);
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    return !esCaida(error) && error.message !== "dirección no permitida";
+  }
+}
+
 export async function leerPagina(url, { signal, maxCaracteres }) {
   let respuesta;
   let bytes;
@@ -141,9 +166,11 @@ export async function leerPagina(url, { signal, maxCaracteres }) {
     if (respuesta.ok) bytes = await leerConTope(respuesta);
   } catch (error) {
     if (signal?.aborted) throw error;
+    if (esCaida(error)) throw caido("el sitio ya no existe");
     if (error.name === "TimeoutError") throw new Error("tardó demasiado en responder");
     throw new Error(/no permitida|redirecciones/.test(error.message) ? error.message : "no se pudo abrir");
   }
+  if (ESTADOS_DE_CAIDA.has(respuesta.status)) throw caido(`respondió ${respuesta.status}`);
   if (!respuesta.ok) throw new Error(`respondió ${respuesta.status}`);
 
   const tipo = respuesta.headers.get("content-type") ?? "";

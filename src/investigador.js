@@ -29,6 +29,7 @@ const MAXIMO_LEIDO = 600000;
 const NOMBRES_DE_DESTINOS = { academico: "artículos académicos", libros: "libros" };
 const MAX_ASPECTOS = 15;
 const NO_APORTA = "no aporta al tema";
+const ENLACE_CAIDO = "el enlace ya no existe";
 const SIN_ACCESO = "sin acceso al contenido";
 
 export function normalizarUrl(direccion) {
@@ -419,8 +420,27 @@ export function crearInvestigador({
   buscarLibros,
   saldoAcademico,
   leerPagina,
+  enlaceVivo = async () => true,
   opciones,
 }) {
+  // El texto de Tavily y el resumen de OpenAlex siguen ahí aunque la página ya no exista: sin esta
+  // comprobación el informe citaba enlaces caídos. Se usa el primer enlace vivo de la misma obra.
+  async function asegurarEnlace(conversacion, candidata, signal, { primeroCaido = false } = {}) {
+    const enlaces = [candidata.url, ...(candidata.alternativas ?? [])];
+    for (let i = primeroCaido ? 1 : 0; i < enlaces.length; i++) {
+      // Un repuesto que ya trajo otra búsqueda daría la misma fuente dos veces.
+      const clave = normalizarUrl(enlaces[i]);
+      if (i > 0 && conversacion.vistas.has(clave)) continue;
+      if (await enlaceVivo(enlaces[i], { signal })) {
+        conversacion.vistas.add(clave);
+        candidata.url = enlaces[i];
+        candidata.alternativas = enlaces.slice(i + 1);
+        return;
+      }
+    }
+    throw new Error(ENLACE_CAIDO);
+  }
+
   // De una página larga se analizan los pasajes que hablan de la búsqueda que la trajo y del
   // tema, no su comienzo (en un informe de 400.000 caracteres, el comienzo es la tapa y el índice).
   async function obtenerTexto(conversacion, candidata, signal) {
@@ -431,13 +451,20 @@ export function crearInvestigador({
         maximo: opciones.caracteresPorFuente,
       });
     if (candidata.contenido?.length >= MINIMO_CONTENIDO) {
+      await asegurarEnlace(conversacion, candidata, signal);
       return { titulo: candidata.titulo, texto: elegir(candidata.contenido) };
     }
     try {
       const pagina = await leerPagina(candidata.url, { signal, maxCaracteres: MAXIMO_LEIDO });
       return { titulo: pagina.titulo, texto: elegir(pagina.texto) };
     } catch (error) {
-      if (signal.aborted || !(candidata.resumen?.length >= MINIMO_RESUMEN)) throw error;
+      if (signal.aborted) throw error;
+      if (error.caido) {
+        // Cada vuelta gasta el enlace probado, así que termina.
+        await asegurarEnlace(conversacion, candidata, signal, { primeroCaido: true });
+        return obtenerTexto(conversacion, candidata, signal);
+      }
+      if (!(candidata.resumen?.length >= MINIMO_RESUMEN)) throw error;
       return { titulo: candidata.titulo, texto: candidata.resumen };
     }
   }
@@ -491,7 +518,7 @@ export function crearInvestigador({
       if (signal.aborted) throw error;
       // Todo lo que no se descartó por tratar otro tema (sin acceso, bloqueada, PDF, error al
       // leer) queda anotado para que la persona pueda revisarlo a mano.
-      const revisar = error.message !== NO_APORTA;
+      const revisar = error.message !== NO_APORTA && error.message !== ENLACE_CAIDO;
       if (revisar) {
         (conversacion.pendientes ??= []).push({
           url: candidata.url,

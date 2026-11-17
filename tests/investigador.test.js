@@ -962,3 +962,50 @@ test("papers: se dejan solo tras N búsquedas seguidas sin aporte, sin mínimo",
   const avisos = eventos.filter((e) => e.tipo === "aviso").map((e) => e.datos.texto);
   assert.ok(avisos.includes("Las últimas 3 búsquedas de papers y libros no aportaron información nueva (van 5)."));
 });
+
+test("enlaces caídos: se usa otro enlace vivo de la misma obra o la fuente se descarta sin quedar para revisar", async () => {
+  const comprobados = [];
+  const investigador = crearInvestigador({
+    llm: llmFijo,
+    opciones: OPCIONES,
+    buscar: async () => ({
+      motor: "simulado",
+      resultados: [
+        {
+          titulo: "Paper con DOI caído",
+          url: "https://doi.test/caido",
+          alternativas: ["https://repo.test/caido", "https://repo.test/vivo"],
+          contenido: "x".repeat(500),
+        },
+        { titulo: "Página borrada", url: "https://web.test/borrada", contenido: "x".repeat(500) },
+        {
+          titulo: "Lectura con 404",
+          url: "https://web.test/404",
+          alternativas: ["https://repo.test/otra"],
+          resumen: "r".repeat(500),
+        },
+      ],
+    }),
+    leerPagina: async (url) => {
+      if (url.endsWith("/404")) throw Object.assign(new Error("respondió 404"), { caido: true });
+      return { titulo: "Otra", texto: "texto de la otra copia" };
+    },
+    enlaceVivo: async (url) => {
+      comprobados.push(url);
+      return url.startsWith("https://repo.test/") && !url.endsWith("/caido");
+    },
+  });
+
+  const eventos = [];
+  const conversacion = crearConversacion("id", "ana", "Tema");
+  await investigador.investigar(conversacion, flujoDe(eventos));
+
+  assert.deepEqual(conversacion.fuentes.map((fuente) => fuente.url).sort(), [
+    "https://repo.test/otra",
+    "https://repo.test/vivo",
+  ]);
+  assert.ok(!comprobados.includes("https://web.test/404"), "lo que ya dio 404 al leer no se vuelve a probar");
+  const descartadas = eventos.filter((e) => e.tipo === "fuente" && e.datos.estado === "descartada");
+  assert.deepEqual(descartadas.map((e) => [e.datos.motivo, e.datos.revisar]), [["el enlace ya no existe", undefined]]);
+  assert.equal(conversacion.pendientes, undefined);
+});

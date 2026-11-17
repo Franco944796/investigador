@@ -158,6 +158,9 @@ export function resumenDe(indiceInvertido) {
   return palabras.filter(Boolean).join(" ");
 }
 
+// Cada enlace caído cuesta hasta 15 s de espera al comprobarlo.
+const MAX_ENLACES = 5;
+
 export function deOpenAlex(obra) {
   const titulo = obra.display_name ?? obra.title ?? "";
   const resumen = resumenDe(obra.abstract_inverted_index);
@@ -173,9 +176,19 @@ export function deOpenAlex(obra) {
   ]
     .filter(Boolean)
     .join("\n");
+  // OpenAlex guarda enlaces viejos (DOI sin registrar, repositorios mudados): los demás de la misma
+  // obra quedan de repuesto por si el primero está caído.
+  const enlaces = [
+    obra.doi,
+    obra.open_access?.oa_url,
+    obra.primary_location?.landing_page_url,
+    ...(obra.locations ?? []).flatMap((lugar) => [lugar.landing_page_url, lugar.pdf_url]),
+  ];
+  const [url = obra.id, ...alternativas] = [...new Set(enlaces.filter(Boolean))].slice(0, MAX_ENLACES);
   return {
     titulo,
-    url: obra.doi || obra.open_access?.oa_url || obra.primary_location?.landing_page_url || obra.id,
+    url,
+    ...(alternativas.length && { alternativas }),
     resumen: ficha,
     // Sin resumen no hay qué analizar: se intenta leer la página del artículo.
     contenido: resumen ? ficha : "",
@@ -191,6 +204,7 @@ const CAMPOS_OPENALEX = [
   "publication_year",
   "cited_by_count",
   "primary_location",
+  "locations",
   "open_access",
   "authorships",
   "abstract_inverted_index",

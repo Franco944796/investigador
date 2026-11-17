@@ -228,6 +228,17 @@ test("OpenAlex: arma la ficha con el resumen reconstruido y sin resumen no da co
     fecha: "2025",
   });
   assert.equal(deOpenAlex({ ...obra, abstract_inverted_index: null }).contenido, "");
+  const conLugares = deOpenAlex({
+    ...obra,
+    open_access: { oa_url: "https://repo.test/a.pdf" },
+    locations: [
+      { landing_page_url: "https://doi.org/10.1/x", pdf_url: "https://repo.test/a.pdf" },
+      { landing_page_url: "https://doaj.test/1", pdf_url: null },
+    ],
+  });
+  assert.equal(conLugares.url, "https://doi.org/10.1/x");
+  assert.deepEqual(conLugares.alternativas, ["https://repo.test/a.pdf", "https://doaj.test/1"]);
+  assert.equal(deOpenAlex({ ...obra, doi: null }).url, "https://openalex.org/W1");
 });
 
 test("Tavily recibe los dominios cuando la búsqueda va a sitios", async () => {
