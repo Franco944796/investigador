@@ -168,7 +168,9 @@ const elemento = (etiqueta, propiedades = {}, ...hijos) => {
 const tituloDe = (texto) =>
   (texto.match(/^\s*Pregunta:[ \t]*(\S.*)$/im)?.[1] ?? texto.split("\n")[0]).slice(0, 140);
 
-function agregarRespuesta(pregunta = "") {
+// El informe de una investigación no se muestra en el chat (Franco, 2026-11-16): se lee en «Ver
+// informe» o en el PDF. Las respuestas a las preguntas de seguimiento sí.
+function agregarRespuesta(pregunta = "", { esInvestigacion = false } = {}) {
   const nodo = clonar("#plantilla-respuesta");
   const progreso = nodo.querySelector(".progreso");
   const etapa = nodo.querySelector(".etapa");
@@ -361,7 +363,7 @@ function agregarRespuesta(pregunta = "") {
           contar();
         }
         if (tipo === "fuente") pintarFuente(datos);
-        if (tipo === "texto") {
+        if (tipo === "texto" && !esInvestigacion) {
           markdown += datos.delta;
           if (pintadoPendiente) return;
           pintadoPendiente = true;
@@ -469,7 +471,7 @@ async function retomar() {
 function procesar({ tipo, datos }) {
   if (tipo === "pregunta") {
     agregarPregunta(datos.texto);
-    estado.vista = agregarRespuesta(datos.texto);
+    estado.vista = agregarRespuesta(datos.texto, { esInvestigacion: Boolean(datos.profundidad) });
     estado.ocupada = true;
   } else if (tipo === "listo") {
     estado.enVivo = true;

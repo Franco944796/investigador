@@ -775,12 +775,13 @@ test("las páginas sin acceso o que no se pudieron leer quedan para revisar a ma
     conversacion.pendientes.map((pendiente) => pendiente.motivo),
     ["sin acceso al contenido", "respondió 403", "sin acceso al contenido", "sin acceso al contenido", "sin acceso al contenido"],
   );
-  const seccion = conversacion.informe.split("## Fuentes para revisar a mano")[1];
-  const enlaces = [...seccion.matchAll(/^- \[(.+?)\]\((.+?)\) — (.+)$/gm)].map(([, titulo, url, motivo]) => [titulo, url, motivo]);
-  assert.equal(enlaces.length, 5);
-  assert.deepEqual(enlaces[0], ["Página ficha-1", "https://a.test/ficha-1", "sin acceso al contenido"]);
-  assert.deepEqual(enlaces.at(-1), ["Página bloqueada", "https://a.test/bloqueada", "respondió 403"], "las bloqueadas van al final");
-  assert.ok(conversacion.informe.indexOf("## Fuentes\n") < conversacion.informe.indexOf("## Fuentes para revisar a mano"));
+  assert.deepEqual(conversacion.pendientes[0], {
+    url: "https://a.test/ficha-1",
+    titulo: "Página [ficha-1]",
+    motivo: "sin acceso al contenido",
+  });
+  assert.ok(!conversacion.informe.includes("revisar a mano"), "ya no van en el informe ni en el PDF");
+  assert.equal(conversacion.fuentesEnInforme, 2);
 });
 
 // Lo que se guarda en la base y vuelve tras un reinicio (ver aRegistro en src/app.js).

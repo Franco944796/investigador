@@ -1,10 +1,17 @@
-// Cada pedido carga solo lo suyo: armar usa pdfmake y las fuentes; unir, solo pdf-lib.
-process.once("message", async ({ armar, unir }) => {
+// Cada tarea carga solo lo suyo: armar, cuerpo y portada usan pdfmake y las fuentes; unir, solo
+// pdf-lib; texto, solo pdf.js.
+const TAREAS = {
+  armar: async (datos) => (await import("./pdf.js")).generarPDF(datos),
+  cuerpo: async (datos) => (await import("./pdf.js")).generarCuerpo(datos),
+  portada: async (datos) => (await import("./pdf.js")).generarPortada(datos),
+  unir: async ({ partes, titulo }) => (await import("./unirPDF.js")).unirPartes(partes, titulo),
+  texto: async ({ bytes }) => (await import("./extraerPDF.js")).extraerTextoPDF(bytes),
+};
+
+process.once("message", async ({ tarea, datos }) => {
   try {
-    const pdf = armar
-      ? await (await import("./pdf.js")).generarPDF(armar)
-      : await (await import("./unirPDF.js")).unirPartes(unir.partes, unir.titulo);
-    process.send({ pdf }, () => process.exit(0));
+    const resultado = await TAREAS[tarea](datos);
+    process.send({ resultado }, () => process.exit(0));
   } catch (error) {
     process.send({ error: error.message }, () => process.exit(1));
   }

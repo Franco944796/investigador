@@ -6,6 +6,7 @@ import { leerConfig } from "../src/config.js";
 import { crearInvestigador } from "../src/investigador.js";
 import { crearLLM } from "../src/llm.js";
 import { generarPDF } from "../src/pdf.js";
+import { crearGeneradorAparte } from "../src/pdfAparte.js";
 import { crearAcceso } from "./ayuda.js";
 import { buscarSimulado, crearLectorSimulado, iniciarLLMSimulado } from "./simulados.js";
 
@@ -43,6 +44,7 @@ crearApp({
   investigador,
   almacen,
   generarPDF,
+  extraerTextoPDF: crearGeneradorAparte().extraerTexto,
   saldos,
 })
   .listen(config.puerto, "127.0.0.1", () => {

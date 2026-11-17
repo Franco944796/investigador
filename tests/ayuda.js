@@ -9,6 +9,7 @@ import { leerConfig } from "../src/config.js";
 import { crearInvestigador } from "../src/investigador.js";
 import { crearLLM } from "../src/llm.js";
 import { generarPDF } from "../src/pdf.js";
+import { crearGeneradorAparte } from "../src/pdfAparte.js";
 import { buscarSimulado, crearLectorSimulado } from "./simulados.js";
 
 const TERMINALES = new Set(["fin", "error", "cancelada"]);
@@ -35,6 +36,7 @@ export async function levantar({
   demoraLectorMs = 0,
   saldos,
   pdf = generarPDF,
+  extraerTextoPDF = crearGeneradorAparte().extraerTexto,
 }) {
   const config = leerConfig(entorno);
   const investigador = crearInvestigador({
@@ -44,7 +46,15 @@ export async function levantar({
     opciones: config.investigacion,
   });
   await almacen.preparar();
-  const app = crearApp({ config, acceso, investigador, almacen, generarPDF: pdf, saldos });
+  const app = crearApp({
+    config,
+    acceso,
+    investigador,
+    almacen,
+    generarPDF: pdf,
+    extraerTextoPDF,
+    saldos,
+  });
   const servidor = app.listen(0, "127.0.0.1");
   await new Promise((listo) => servidor.once("listening", listo));
   return { app, servidor, base: `http://127.0.0.1:${servidor.address().port}` };
@@ -66,6 +76,8 @@ export function cliente(base) {
 
   return {
     pedir,
+    // Para pedidos que no son JSON (por ejemplo, subir un PDF).
+    cabecera: () => `Bearer ${token}`,
     async entrar(codigo) {
       const respuesta = await pedir("/api/entrar", { metodo: "POST", cuerpo: { codigo } });
       if (respuesta.ok) token = (await respuesta.clone().json()).token;

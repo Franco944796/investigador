@@ -4,10 +4,12 @@ import { fileURLToPath } from "node:url";
 import * as fontkit from "fontkit";
 import { marked } from "marked";
 import pdfmake from "pdfmake";
+import { direccionCorta, tituloLegible } from "../public/direcciones.js";
 import { PARTIR, latexATexto, separarFormulas } from "../public/formulas.js";
 import { dibujarGrafico, imagenDe, tipoDeGrafico } from "../public/graficos.js";
 import { descargarImagen } from "./lector.js";
-import { fechaDelPie, textoDelPie } from "./titulos.js";
+import { separarTitulo, sinPendientes } from "./titulos.js";
+import { unirPartes } from "./unirPDF.js";
 
 const AZUL = "#1a56b0";
 const ANCHO_UTIL = 483;
@@ -59,7 +61,10 @@ const tieneGlifo = (caracter) =>
 function porFuente(texto, estilo) {
   const tramos = [];
   for (const grupo of texto.match(/\P{M}\p{M}*|\p{M}+/gu) ?? []) {
-    const fuenteDelGrupo = /^\s$/u.test(grupo) || [...grupo].every(robotoLoTiene) ? null : "DejaVu";
+    // Solo los espacios comunes van sin fuente propia: el espacio fino (U+202F, «300 bar») no
+    // está en Roboto y salía como recuadro.
+    const fuenteDelGrupo =
+      /^[ \t\r\n]$/.test(grupo) || [...grupo].every(robotoLoTiene) ? null : "DejaVu";
     const ultimo = tramos.at(-1);
     if (ultimo && (ultimo.font ?? null) === fuenteDelGrupo) ultimo.text += grupo;
     else tramos.push(fuenteDelGrupo ? { ...estilo, text: grupo, font: fuenteDelGrupo } : { ...estilo, text: grupo });
@@ -98,6 +103,7 @@ const decodificar = (texto) =>
 // Las fórmulas del informe que se está armando: bloques() es síncrona y generarPDF la fija justo
 // antes de llamarla.
 let formulas = [];
+let titulos = [];
 
 const formulaEnLinea = (tex, estilo) =>
   latexATexto(tex).flatMap(({ text, sub, sup }) =>
@@ -205,10 +211,19 @@ function tramos(tokens, estilo, urls) {
         return tramos(token.tokens, { ...estilo, italics: true }, urls);
       case "del":
         return tramos(token.tokens, { ...estilo, decoration: "lineThrough" }, urls);
-      case "link":
-        return /^https?:\/\//.test(token.href)
-          ? tramos(token.tokens, { ...estilo, link: token.href, color: AZUL }, urls)
-          : tramos(token.tokens, estilo, urls);
+      case "link": {
+        if (!/^https?:\/\//.test(token.href)) return tramos(token.tokens, estilo, urls);
+        const enlace = { ...estilo, link: token.href, color: AZUL };
+        const texto = tramos(token.tokens, enlace, urls);
+        // Un título en chino o japonés queda vacío (o en puros números) al quitar lo que las
+        // fuentes no tienen: en su lugar va la dirección acortada, con el mismo enlace.
+        const legible = tituloLegible(texto.map((tramo) => tramo.text ?? "").join(""));
+        if (!legible) return porFuente(aptoParaPDF(direccionCorta(token.href)), enlace);
+        // Lo que queda de un título a medio quitar: «· - Caixin Global» → «Caixin Global».
+        const bordes = /^[\s·•|:,;_–—-]+|[\s·•|:,;_–—-]+$/g;
+        if (texto.length === 1) return [{ ...texto[0], text: texto[0].text.replace(bordes, "") }];
+        return texto;
+      }
       case "codespan":
         return porFuente(decodificar(token.text), { ...estilo, background: "#eeeeee" });
       case "br":
@@ -241,8 +256,17 @@ const lineasHorizontales = (relleno) => ({
 function bloques(tokens, urls, imagenes = new Map()) {
   return tokens.flatMap((token) => {
     switch (token.type) {
-      case "heading":
-        return [{ text: enLinea(tramos(token.tokens, {}, urls)), style: `h${Math.min(token.depth, 3)}` }];
+      case "heading": {
+        const texto = enLinea(tramos(token.tokens, {}, urls));
+        const nodo = { text: texto, style: `h${Math.min(token.depth, 3)}` };
+        // Secciones y subsecciones van al índice: pdfmake avisa en qué página cae cada una.
+        if (token.depth === 2 || token.depth === 3) {
+          const id = `titulo-${titulos.length}`;
+          titulos.push({ id, nivel: token.depth, texto: texto.map((tramo) => tramo.text).join("") });
+          Object.assign(nodo, { id, headlineLevel: token.depth });
+        }
+        return [nodo];
+      }
       case "paragraph":
         return conFormulas(tramos(token.tokens, {}, urls), { margin: [0, 0, 0, 8] });
       case "text":
@@ -370,9 +394,23 @@ function bloqueDeGrafico(texto, urls, imagenes) {
   ];
 }
 
-// `conPie: false` para las partes de un PDF grande: el pie con la numeración se pone al unirlas
-// (ver src/unirPDF.js), porque cada parte solo conoce sus propias páginas.
-export async function generarPDF({ titulo, markdown, fuentes, conPie = true }) {
+const ESTILOS = {
+  h1: { fontSize: 20, bold: true, lineHeight: 1.15, margin: [0, 0, 0, 12] },
+  h2: { fontSize: 14, bold: true, margin: [0, 12, 0, 6] },
+  h3: { fontSize: 11.5, bold: true, margin: [0, 8, 0, 4] },
+  cita: { italics: true, color: "#555555", margin: [14, 0, 0, 8] },
+  codigo: { fontSize: 9, fillColor: "#f2f2f2", preserveLeadingSpaces: true },
+};
+const PAGINA = {
+  pageSize: "A4",
+  pageMargins: [56, 56, 56, 64],
+  defaultStyle: { font: "Roboto", fontSize: 10.5, lineHeight: 1.3 },
+  styles: ESTILOS,
+};
+
+// El cuerpo (o una parte de él), sin pie: la numeración se pone al unir portada, índice y cuerpo
+// (ver src/unirPDF.js). Devuelve también la página de cada sección y subsección, y cuántas tiene.
+export async function generarCuerpo({ markdown, fuentes }) {
   const urls = new Map(fuentes.map((fuente) => [fuente.n, fuente.url]));
   const separado = separarFormulas(markdown);
   const tokens = marked.lexer(aptoParaPDF(separado.texto));
@@ -385,34 +423,94 @@ export async function generarPDF({ titulo, markdown, fuentes, conPie = true }) {
       ]),
     ),
   );
-  const fecha = fechaDelPie();
   formulas = separado.formulas;
+  titulos = [];
   const contenido = bloques(tokens, urls, imagenes);
-  return pdfmake
+  const propios = titulos;
+  const paginaDe = new Map();
+  let paginas = 0;
+  const pdf = await pdfmake
     .createPdf({
-      info: { title: titulo },
-      pageSize: "A4",
-      pageMargins: [56, 56, 56, 64],
-      defaultStyle: { font: "Roboto", fontSize: 10.5, lineHeight: 1.3 },
-      footer: conPie
-        ? (pagina, total) => ({
-            text: textoDelPie(fecha, pagina, total),
-            alignment: "center",
-            fontSize: 8,
-            color: "#777777",
-            margin: [0, 24, 0, 0],
-          })
-        : undefined,
+      ...PAGINA,
       content: contenido,
-      styles: {
-        h1: { fontSize: 20, bold: true, lineHeight: 1.15, margin: [0, 0, 0, 12] },
-        h2: { fontSize: 14, bold: true, margin: [0, 12, 0, 6] },
-        h3: { fontSize: 11.5, bold: true, margin: [0, 8, 0, 4] },
-        cita: { italics: true, color: "#555555", margin: [14, 0, 0, 8] },
-        codigo: { fontSize: 9, fillColor: "#f2f2f2", preserveLeadingSpaces: true },
+      pageBreakBefore: (nodo) => {
+        if (nodo.headlineLevel && nodo.id) paginaDe.set(nodo.id, nodo.startPosition.pageNumber);
+        return false;
+      },
+      footer: (pagina, total) => {
+        paginas = total;
+        return null;
       },
     })
     .getBuffer();
+  return {
+    pdf,
+    paginas,
+    titulos: propios.map(({ id, nivel, texto }) => ({ nivel, texto, pagina: paginaDe.get(id) ?? 1 })),
+  };
+}
+
+const fechaLarga = () =>
+  new Date().toLocaleDateString("es-AR", { day: "numeric", month: "long", year: "numeric" });
+
+// Portada e índice. Los números del índice dependen de cuántas páginas ocupa el propio índice:
+// se arma una vez para contarlas y, si no coincidía con lo supuesto, otra vez.
+export async function generarPortada({ titulo, titulos }) {
+  const armar = async (previas) => {
+    let paginas = 0;
+    const filas = titulos.map(({ nivel, texto, pagina }) => [
+      {
+        text: porFuente(aptoParaPDF(texto), {}),
+        fontSize: nivel === 2 ? 10.5 : 9.5,
+        bold: nivel === 2,
+        color: nivel === 2 ? "#1d2127" : "#444444",
+        margin: [nivel === 2 ? 0 : 14, nivel === 2 ? 5 : 1, 8, 0],
+      },
+      {
+        text: String(previas + pagina),
+        fontSize: nivel === 2 ? 10.5 : 9.5,
+        color: nivel === 2 ? "#1d2127" : "#444444",
+        alignment: "right",
+        margin: [0, nivel === 2 ? 5 : 1, 0, 0],
+      },
+    ]);
+    const pdf = await pdfmake
+      .createPdf({
+        ...PAGINA,
+        info: { title: titulo },
+        footer: (pagina, total) => {
+          paginas = total;
+          return null;
+        },
+        content: [
+          { text: porFuente(aptoParaPDF(titulo), {}), fontSize: 24, bold: true, lineHeight: 1.15, margin: [0, 200, 0, 16] },
+          { text: "Informe de investigación", fontSize: 12, color: "#555555", margin: [0, 0, 0, 4] },
+          { text: fechaLarga(), fontSize: 11, color: "#777777", pageBreak: "after" },
+          { text: "Índice", style: "h1" },
+          filas.length
+            ? { table: { widths: ["*", "auto"], body: filas }, layout: "noBorders" }
+            : { text: "El informe no tiene secciones.", color: "#777777" },
+        ],
+      })
+      .getBuffer();
+    return { pdf, paginas };
+  };
+  let previas = 2;
+  let armado = await armar(previas);
+  for (let intento = 0; intento < 3 && armado.paginas !== previas; intento++) {
+    previas = armado.paginas;
+    armado = await armar(previas);
+  }
+  return armado.pdf;
+}
+
+// Todo en un proceso (informes cortos y pruebas). Los largos se arman por partes en
+// src/pdfAparte.js, con estas mismas piezas.
+export async function generarPDF({ titulo, markdown, fuentes }) {
+  const separado = separarTitulo(sinPendientes(markdown));
+  const cuerpo = await generarCuerpo({ markdown: separado.cuerpo, fuentes });
+  const portada = await generarPortada({ titulo: separado.titulo ?? titulo, titulos: cuerpo.titulos });
+  return unirPartes([portada, cuerpo.pdf], titulo);
 }
 
 // El servidor las importa de titulos.js para no cargar las fuentes del PDF en su memoria.

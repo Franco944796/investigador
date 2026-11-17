@@ -441,6 +441,77 @@ a.cita:focus-visible {
   overflow-wrap: anywhere;
 }
 
+.estado-pendiente {
+  display: block;
+  margin-top: 2px;
+  color: var(--texto-suave);
+  font-size: 0.82rem;
+}
+
+.error-pendiente {
+  margin: 4px 0 0;
+  color: var(--error);
+  font-size: 0.82rem;
+}
+
+.boton.principal {
+  border-color: var(--acento);
+  background: var(--acento);
+  color: var(--fondo);
+}
+
+.boton.principal:hover:not(:disabled) {
+  color: var(--fondo);
+  opacity: 0.9;
+}
+
+.boton.chico {
+  display: block;
+  min-height: 28px;
+  margin-top: 6px;
+  padding: 0 10px;
+  font-size: 0.8rem;
+}
+
+.agregar-contenido {
+  display: grid;
+  gap: 8px;
+  margin: 8px 0 4px;
+  font-size: 0.85rem;
+}
+
+.agregar-contenido textarea {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--borde);
+  border-radius: 8px;
+  background: var(--fondo-suave);
+  color: var(--texto);
+  font: 0.85rem/1.5 system-ui, sans-serif;
+  resize: vertical;
+}
+
+.agregar-contenido input[type="file"] {
+  max-width: 100%;
+  font-size: 0.8rem;
+}
+
+.botones-pendiente {
+  display: flex;
+  gap: 8px;
+}
+
+.rehacer {
+  margin: 0 0 1em;
+}
+
+.rehaciendo {
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: var(--acento-fondo);
+  font: 0.9rem system-ui, sans-serif;
+}
+
 .lista-fuentes li:target {
   background: var(--acento-fondo);
   outline: 6px solid var(--acento-fondo);
@@ -560,7 +631,8 @@ a.cita:focus-visible {
   .herramientas,
   .indice,
   .vista-cita,
-  .conexion {
+  .conexion,
+  .solo-pagina {
     display: none !important;
   }
 

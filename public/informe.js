@@ -1,5 +1,8 @@
 import {
   $,
+  API,
+  cabeceras,
+  conEspera,
   descargar,
   guardarArchivo,
   guardarDato,
@@ -7,6 +10,9 @@ import {
   pedir,
   pintarMarkdown,
 } from "./comun.js";
+import { direccionCorta, tituloLegible } from "./direcciones.js";
+
+const nombreDeFuente = (titulo, url) => (tituloLegible(titulo) ? titulo : direccionCorta(url));
 
 const id = new URLSearchParams(location.search).get("id");
 const documento = $("#documento");
@@ -122,7 +128,7 @@ function listaDeFuentes(citadas) {
       { id: `fuente-${fuente.n}`, value: fuente.n },
       elemento("a", {
         href: fuente.url,
-        textContent: fuente.titulo || fuente.url,
+        textContent: nombreDeFuente(fuente.titulo, fuente.url),
         target: "_blank",
         rel: "noopener noreferrer",
       }),
@@ -134,31 +140,190 @@ function listaDeFuentes(citadas) {
   return elemento("section", {}, elemento("h2", { textContent: "Fuentes" }), lista);
 }
 
-// Páginas que aparecieron en las búsquedas pero no se pudieron leer.
-function listaDePendientes(pendientes) {
-  const unicas = [...new Map(pendientes.map((pendiente) => [pendiente.url, pendiente])).values()];
-  const lista = elemento("ul", { className: "lista-fuentes pendientes" });
-  for (const { url, titulo, motivo } of unicas) {
-    lista.append(
-      elemento(
-        "li",
-        {},
-        elemento("a", { href: url, textContent: titulo || url, target: "_blank", rel: "noopener noreferrer" }),
-        " ",
-        elemento("span", { className: "sitio", textContent: `${sitioDe(url)} · ${motivo}` }),
-      ),
+// Páginas que aparecieron en las búsquedas pero no se pudieron leer. Si la persona tiene acceso,
+// puede agregar su contenido (texto o PDF) y rehacer el informe con lo agregado. Los botones y
+// formularios llevan .solo-pagina: no van en el HTML descargado ni al imprimir.
+const SIN_ACCESO = "sin acceso al contenido";
+const MAX_PDF = 20 * 1024 * 1024;
+const rutaDe = (final) => `/api/conversaciones/${encodeURIComponent(id)}${final}`;
+let seccionPendientes = null;
+let consulta = null;
+
+const cantidad = (n, una, varias) => `${n} ${n === 1 ? una : varias}`;
+
+function estadoDePendiente({ estado, fuente, mensaje }) {
+  if (estado === "procesando") return { texto: "Analizando el contenido…" };
+  if (estado === "agregada") return { texto: `Agregada como fuente ${fuente}.` };
+  if (mensaje) return { texto: mensaje, error: true };
+  return null;
+}
+
+async function enviarContenido(url, texto, archivo) {
+  if (archivo) {
+    if (archivo.size > MAX_PDF) throw new Error("El PDF pasa de 20 MB: copiá su texto y pegalo.");
+    const respuesta = await conEspera(
+      () =>
+        fetch(`${API}${rutaDe("/pendientes")}?url=${encodeURIComponent(url)}`, {
+          method: "POST",
+          headers: cabeceras({ "Content-Type": "application/pdf" }),
+          body: archivo,
+        }),
+      false,
+    );
+    if (!respuesta.ok) {
+      const { error } = await respuesta.json().catch(() => ({}));
+      throw new Error(error || "No se pudo enviar el PDF.");
+    }
+    return;
+  }
+  await pedir(rutaDe("/pendientes"), { metodo: "POST", cuerpo: { url, texto } });
+}
+
+function formularioDeContenido(url, alCancelar) {
+  const texto = elemento("textarea", {
+    rows: 6,
+    placeholder: "Pegá acá el texto de la fuente (por ejemplo, el capítulo o el artículo completo)…",
+  });
+  const archivo = elemento("input", { type: "file", accept: ".pdf,application/pdf" });
+  const error = elemento("p", { className: "error-pendiente", hidden: true });
+  const agregar = elemento("button", { type: "submit", className: "boton principal", textContent: "Agregar" });
+  const cancelar = elemento("button", { type: "button", className: "boton", textContent: "Cancelar" });
+  const formulario = elemento(
+    "form",
+    { className: "agregar-contenido solo-pagina" },
+    texto,
+    elemento("label", {}, "o subí su PDF (hasta 20 MB): ", archivo),
+    error,
+    elemento("div", { className: "botones-pendiente" }, agregar, cancelar),
+  );
+  cancelar.addEventListener("click", alCancelar);
+  formulario.addEventListener("submit", async (evento) => {
+    evento.preventDefault();
+    error.hidden = true;
+    agregar.disabled = true;
+    try {
+      await enviarContenido(url, texto.value.trim(), archivo.files[0]);
+      await actualizar();
+    } catch (fallo) {
+      error.textContent = fallo.message;
+      error.hidden = false;
+      agregar.disabled = false;
+    }
+  });
+  return formulario;
+}
+
+function itemPendiente(pendiente, ocupada) {
+  const { url, titulo, motivo } = pendiente;
+  const item = elemento(
+    "li",
+    {},
+    elemento("a", { href: url, textContent: nombreDeFuente(titulo, url), target: "_blank", rel: "noopener noreferrer" }),
+    " ",
+    elemento("span", { className: "sitio", textContent: `${sitioDe(url)} · ${motivo}` }),
+  );
+  const estado = estadoDePendiente(pendiente);
+  if (estado) {
+    item.append(
+      elemento("span", {
+        className: `estado-pendiente solo-pagina${estado.error ? " error-pendiente" : ""}`,
+        textContent: estado.texto,
+      }),
     );
   }
+  if (!ocupada && !["procesando", "agregada"].includes(pendiente.estado)) {
+    const abrir = elemento("button", {
+      type: "button",
+      className: "boton chico solo-pagina",
+      textContent: "Agregar contenido",
+    });
+    abrir.addEventListener("click", () => {
+      const formulario = formularioDeContenido(url, () => {
+        formulario.remove();
+        abrir.hidden = false;
+      });
+      abrir.hidden = true;
+      item.append(formulario);
+      formulario.querySelector("textarea").focus();
+    });
+    item.append(abrir);
+  }
+  return item;
+}
+
+function barraDeRehacer({ ocupada, paraRehacer }) {
+  if (ocupada) {
+    return elemento("p", {
+      className: "rehaciendo solo-pagina",
+      textContent: "Se está rehaciendo el informe con las fuentes agregadas. Esta página se actualiza sola; podés cerrarla y volver más tarde.",
+    });
+  }
+  if (!paraRehacer) return null;
+  const boton = elemento("button", {
+    type: "button",
+    className: "boton principal",
+    textContent: `Rehacer informe con ${cantidad(paraRehacer, "fuente agregada", "fuentes agregadas")}`,
+  });
+  const error = elemento("p", { className: "error-pendiente", hidden: true });
+  boton.addEventListener("click", async () => {
+    boton.disabled = true;
+    error.hidden = true;
+    try {
+      await pedir(rutaDe("/rehacer"), { metodo: "POST" });
+      await actualizar();
+    } catch (fallo) {
+      error.textContent = fallo.message;
+      error.hidden = false;
+      boton.disabled = false;
+    }
+  });
+  return elemento("div", { className: "rehacer solo-pagina" }, boton, error);
+}
+
+function listaDePendientes(datos) {
+  const unicas = [...new Map(datos.pendientes.map((pendiente) => [pendiente.url, pendiente])).values()];
+  const ordenadas = [
+    ...unicas.filter((pendiente) => pendiente.motivo === SIN_ACCESO),
+    ...unicas.filter((pendiente) => pendiente.motivo !== SIN_ACCESO),
+  ];
+  const lista = elemento("ul", { className: "lista-fuentes pendientes" });
+  for (const pendiente of ordenadas) lista.append(itemPendiente(pendiente, datos.ocupada));
+  const barra = barraDeRehacer(datos);
   return elemento(
     "section",
-    {},
+    { className: "seccion-pendientes" },
     elemento("h2", { textContent: "Fuentes para revisar a mano" }),
     elemento("p", {
       textContent:
-        "Estas páginas aparecieron en las búsquedas pero no se pudieron leer, así que el informe no las usa. Puede valer la pena abrirlas.",
+        "Estas páginas aparecieron en las búsquedas pero no se pudieron leer, así que el informe no las usa. Si tenés acceso a alguna, podés agregar su contenido y rehacer el informe con lo agregado.",
     }),
+    ...(barra ? [barra] : []),
     lista,
   );
+}
+
+// Mientras se analiza contenido agregado o se rehace el informe, se consulta cada pocos segundos.
+function seguirConsultando(datos) {
+  clearTimeout(consulta);
+  const enCurso = datos.ocupada || datos.pendientes?.some((pendiente) => pendiente.estado === "procesando");
+  if (enCurso) consulta = setTimeout(() => actualizar().catch(() => seguirConsultando(datos)), 4000);
+}
+
+async function actualizar() {
+  const datos = await pedir(rutaDe("/informe"));
+  if (datos.informe !== datosDelInforme?.informe) {
+    armar(datos);
+    mostrarAviso("");
+    return;
+  }
+  datosDelInforme = datos;
+  if (seccionPendientes && datos.pendientes?.length) {
+    const nueva = listaDePendientes(datos);
+    seccionPendientes.replaceWith(nueva);
+    seccionPendientes = nueva;
+    armarIndice();
+  }
+  seguirConsultando(datos);
 }
 
 function armarIndice() {
@@ -226,7 +391,7 @@ function mostrarVista(cita) {
   if (!fuente) return;
   citaActiva = cita;
   vista.replaceChildren(
-    elemento("p", { className: "titulo-fuente", textContent: `${fuente.n}. ${fuente.titulo || fuente.url}` }),
+    elemento("p", { className: "titulo-fuente", textContent: `${fuente.n}. ${nombreDeFuente(fuente.titulo, fuente.url)}` }),
     elemento("span", { className: "sitio", textContent: datosDeFuente(fuente) }),
     elemento(
       "div",
@@ -315,10 +480,12 @@ function armar(datos) {
     cuerpo,
     ...(preguntas ? [preguntas] : []),
     listaDeFuentes(citadas),
-    ...(datos.pendientes?.length ? [listaDePendientes(datos.pendientes)] : []),
   );
+  seccionPendientes = datos.pendientes?.length ? listaDePendientes(datos) : null;
+  if (seccionPendientes) documento.append(seccionPendientes);
   document.title = `${titulo} · Investigador`;
   armarIndice();
+  seguirConsultando(datos);
   $("#descargar-html").disabled = false;
   $("#descargar-pdf").disabled = false;
 }
@@ -342,6 +509,7 @@ async function descargarHTML(boton) {
       if (fuente) cita.title = `${fuente.n}. ${fuente.titulo} — ${sitioDe(fuente.url)}`;
     }
     for (const nodo of hoja.querySelectorAll("[aria-current]")) nodo.removeAttribute("aria-current");
+    for (const nodo of hoja.querySelectorAll(".solo-pagina")) nodo.remove();
     const html = `<!doctype html>
 <html lang="es" data-tema="${document.documentElement.dataset.tema}">
 <head>
@@ -397,7 +565,7 @@ if (!id) {
   fallar("Entrá al investigador con tu código para ver este informe.", true);
 } else {
   try {
-    armar(await pedir(`/api/conversaciones/${encodeURIComponent(id)}/informe`));
+    armar(await pedir(rutaDe("/informe")));
   } catch (error) {
     fallar(
       error.estado === 401 ? "Tu sesión venció: entrá de nuevo al investigador." : error.message,

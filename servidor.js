@@ -89,7 +89,15 @@ async function saldos() {
 }
 
 const generarPDF = crearGeneradorAparte({ memoriaMB: config.pdfMemoriaMB });
-const app = crearApp({ config, acceso, investigador, almacen, generarPDF, saldos });
+const app = crearApp({
+  config,
+  acceso,
+  investigador,
+  almacen,
+  generarPDF,
+  extraerTextoPDF: generarPDF.extraerTexto,
+  saldos,
+});
 
 // Render duerme el servicio tras 15 minutos sin pedidos entrantes, aunque haya una
 // investigación corriendo: mientras la haya, el servidor se pide a sí mismo por la URL pública.

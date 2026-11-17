@@ -1,8 +1,9 @@
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import { fechaDelPie, textoDelPie } from "./titulos.js";
 
-// Une las partes de un PDF grande y numera todas las páginas. El pie va en Helvetica (fuente
-// estándar del PDF, sin incrustar): Roboto obligaría a cargar fontkit acá también.
+// Une portada, índice y cuerpo (o sus partes) y numera las páginas; la portada va sin pie, pero
+// cuenta como página 1, igual que en el índice. El pie va en Helvetica (fuente estándar del PDF,
+// sin incrustar): Roboto obligaría a cargar fontkit acá también.
 export async function unirPartes(partes, titulo) {
   const unido = await PDFDocument.create();
   for (const bytes of partes) {
@@ -14,6 +15,7 @@ export async function unirPartes(partes, titulo) {
   const fecha = fechaDelPie();
   const paginas = unido.getPages();
   paginas.forEach((pagina, i) => {
+    if (i === 0) return;
     const texto = textoDelPie(fecha, i + 1, paginas.length);
     const ancho = fuente.widthOfTextAtSize(texto, 8);
     pagina.drawText(texto, {
@@ -25,5 +27,6 @@ export async function unirPartes(partes, titulo) {
     });
   });
   unido.setTitle(titulo);
-  return Buffer.from(await unido.save());
+  // Sin flujos de objetos: los nombres de las fuentes quedan legibles y lo abren lectores viejos.
+  return Buffer.from(await unido.save({ useObjectStreams: false }));
 }

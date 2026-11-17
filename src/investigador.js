@@ -1,4 +1,5 @@
 import { ErrorFormato, ErrorLLM } from "./llm.js";
+import { direccionCorta, tituloLegible } from "../public/direcciones.js";
 import { graficoValido } from "../public/graficos.js";
 import { seleccionarPasajes, terminosDe } from "./pasajes.js";
 import {
@@ -379,31 +380,6 @@ const nombresDe = (idiomas) => {
 
 // No se usa una lista numerada de Markdown: renumera 1, 2, 3… y los números dejarían de
 // coincidir con las citas del texto.
-const MAX_PENDIENTES = 80;
-
-// Páginas que no se pudieron leer: primero las que el modelo vio que tratan el tema pero están
-// restringidas. El título de la sección no puede ser «## Fuentes» a secas: el informe HTML corta ahí.
-export function listaDePendientes(pendientes = []) {
-  const unicas = [...new Map(pendientes.map((pendiente) => [pendiente.url, pendiente])).values()];
-  if (!unicas.length) return "";
-  const ordenadas = [
-    ...unicas.filter((pendiente) => pendiente.motivo === SIN_ACCESO),
-    ...unicas.filter((pendiente) => pendiente.motivo !== SIN_ACCESO),
-  ];
-  const lineas = ordenadas.slice(0, MAX_PENDIENTES).map(({ url, titulo, motivo }) => {
-    const limpio = titulo.replace(/[[\]]/g, " ").replace(/\s+/g, " ").trim() || url;
-    return `- [${limpio}](${url.replace(/\(/g, "%28").replace(/\)/g, "%29")}) — ${motivo}`;
-  });
-  const resto = ordenadas.length - lineas.length;
-  return `
-## Fuentes para revisar a mano
-
-Estas páginas aparecieron en las búsquedas pero no se pudieron leer, así que el informe no las usa. Puede valer la pena abrirlas.
-
-${lineas.join("\n")}${resto > 0 ? `\n- … y ${resto} más.` : ""}
-`;
-}
-
 export function listaDeFuentes(fuentes, cuerpo) {
   // También cuentan las citas de los gráficos ("cita": n dentro de los bloques ```grafico).
   const citadas = new Set(
@@ -411,7 +387,8 @@ export function listaDeFuentes(fuentes, cuerpo) {
   );
   const usadas = fuentes.filter((fuente) => citadas.has(fuente.n));
   const lineas = (usadas.length ? usadas : fuentes).map((fuente) => {
-    const titulo = fuente.titulo.replace(/[[\]]/g, " ").replace(/\s+/g, " ").trim() || fuente.url;
+    const limpio = fuente.titulo.replace(/[[\]]/g, " ").replace(/\s+/g, " ").trim();
+    const titulo = tituloLegible(limpio) ? limpio : direccionCorta(fuente.url);
     const url = fuente.url.replace(/\(/g, "%28").replace(/\)/g, "%29");
     return `- **${fuente.n}.** [${titulo}](${url})`;
   });
@@ -627,7 +604,9 @@ export function crearInvestigador({
   // Con `retomar`, sigue una investigación cortada (reinicio del servidor, error) desde lo último
   // guardado: no vuelve a planificar ni repite búsquedas; si ya había terminado de buscar, solo
   // redacta de nuevo.
-  async function investigar(conversacion, flujo, { retomar = false } = {}) {
+  // Con `rehacer`, solo redacta de nuevo con las fuentes que hay (por ejemplo, con las agregadas a
+  // mano desde «Ver informe»).
+  async function investigar(conversacion, flujo, { retomar = false, rehacer = false } = {}) {
     const contexto = contextoDe(flujo);
     const { emitir } = contexto;
     const cupo = () => opciones.maxFuentes - conversacion.fuentes.length;
@@ -653,7 +632,8 @@ export function crearInvestigador({
       terminados: [],
     });
     const { sinAporte } = progreso;
-    const retomando = retomar && progreso.planificada;
+    if (rehacer) Object.assign(progreso, { planificada: true, buscada: true });
+    const retomando = (retomar || rehacer) && progreso.planificada;
     const finDe = (libres) => {
       const { destinos } = conversacion;
       const clave = libres ? "libres" : "pagas";
@@ -798,10 +778,13 @@ export function crearInvestigador({
     if (retomando) {
       const hecho = busquedasHechas(hechas(false), hechas(true));
       const leidas = cuantas(conversacion.fuentes.length, "fuente leída", "fuentes leídas");
+      const agregadas = conversacion.fuentes.filter((fuente) => fuente.agregada).length;
       emitir("aviso", {
-        texto: progreso.buscada
-          ? `Retomo la investigación: las búsquedas ya estaban terminadas (${hecho}); vuelvo a redactar el informe (${leidas}).`
-          : `Retomo la investigación desde lo último guardado: ${hecho} y ${leidas}.`,
+        texto: rehacer
+          ? `Rehago el informe con las búsquedas ya hechas (${leidas}${agregadas ? `, ${cuantas(agregadas, "agregada", "agregadas")} a mano` : ""}).`
+          : progreso.buscada
+            ? `Retomo la investigación: las búsquedas ya estaban terminadas (${hecho}); vuelvo a redactar el informe (${leidas}).`
+            : `Retomo la investigación desde lo último guardado: ${hecho} y ${leidas}.`,
       });
     } else {
       emitir("etapa", { texto: "Planificando la investigación" });
@@ -946,10 +929,12 @@ export function crearInvestigador({
     const cuerpo = opciones.informePorSecciones
       ? await redactarPorSecciones(conversacion, contexto)
       : await redactarDeUnaVez(conversacion, contexto);
-    const anexo =
-      listaDeFuentes(conversacion.fuentes, cuerpo) + listaDePendientes(conversacion.pendientes);
+    // Las fuentes para revisar a mano ya no van en el informe (ni en el PDF): «Ver informe» las
+    // muestra aparte, con la opción de agregar su contenido.
+    const anexo = listaDeFuentes(conversacion.fuentes, cuerpo);
     emitir("texto", { delta: anexo });
     conversacion.informe = cuerpo + anexo;
+    conversacion.fuentesEnInforme = conversacion.fuentes.length;
   }
 
   async function redactarDeUnaVez(conversacion, contexto) {
@@ -1089,5 +1074,29 @@ export function crearInvestigador({
     conversacion.intercambios.push({ pregunta, respuesta });
   }
 
-  return { investigar, seguir };
+  // Contenido que la persona agrega a mano para una fuente que no se pudo leer (texto pegado o de
+  // un PDF): se analiza como cualquier otra. Devuelve la fuente nueva, o null si no aporta.
+  async function agregarContenido(conversacion, { url, titulo, texto }, contexto) {
+    const terminos = (conversacion.terminos ??= terminosDelTema(conversacion.tema));
+    const elegido = seleccionarPasajes(texto, {
+      terminos,
+      secundarios: terminos,
+      maximo: opciones.caracteresPorFuente,
+    });
+    const respuesta = await llm.completar(
+      promptNotas(conversacion.tema, { titulo, url, texto: elegido }, conversacion.aspectos),
+      contexto,
+    );
+    const { notas, aspectos, fecha, tipo } = interpretarNotas(respuesta ?? "");
+    if (!notas || /^\W*(IRRELEVANTE|SIN ACCESO)\W*$/i.test(notas)) return null;
+    const fuente = { n: conversacion.fuentes.length + 1, url, titulo, notas, agregada: true };
+    if (tipo) fuente.tipo = tipo;
+    if (fecha) fuente.fecha = fecha;
+    const validos = aspectos.filter((numero) => numero >= 1 && numero <= (conversacion.aspectos?.length ?? 0));
+    if (validos.length) fuente.aspectos = validos;
+    conversacion.fuentes.push(fuente);
+    return fuente;
+  }
+
+  return { investigar, seguir, agregarContenido };
 }

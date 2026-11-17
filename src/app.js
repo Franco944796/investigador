@@ -141,6 +141,7 @@ function aRegistro(conversacion) {
       destinos: conversacion.destinos,
       idiomas: conversacion.idiomas,
       progreso: conversacion.progreso,
+      fuentesEnInforme: conversacion.fuentesEnInforme,
     },
   };
 }
@@ -178,8 +179,23 @@ function desdeRegistro(registro) {
 }
 
 const PDFS_GUARDADOS = 3;
+const MINIMO_AGREGADO = 200;
 
-export function crearApp({ config, acceso, investigador, almacen, generarPDF, saldos }) {
+// Fuentes que todavía no están en el informe (agregadas a mano después de redactarlo).
+const paraRehacer = (conversacion) =>
+  conversacion.fuentes.length -
+  (conversacion.fuentesEnInforme ??
+    conversacion.fuentes.filter((fuente) => !fuente.agregada).length);
+
+export function crearApp({
+  config,
+  acceso,
+  investigador,
+  almacen,
+  generarPDF,
+  extraerTextoPDF,
+  saldos,
+}) {
   // Los últimos PDF armados (hasta ~4 MB cada uno), para no rearmarlos en cada descarga. Viven en
   // memoria: tras un reinicio se arman de nuevo.
   const pdfsGuardados = new Map();
@@ -191,6 +207,15 @@ export function crearApp({ config, acceso, investigador, almacen, generarPDF, sa
   // 512 MB en Render, dos investigaciones grandes juntas pueden agotar la memoria y reiniciar el
   // servidor, que corta todo lo que esté corriendo. Las demás esperan en cola.
   const conTurno = crearCola(1);
+  // Fuentes agregadas a mano que se están analizando ("id url"): se pierde con un reinicio, y
+  // entonces su estado «procesando» guardado se muestra como cortado.
+  const analizando = new Set();
+  const pendientesDe = (conversacion) =>
+    (conversacion.pendientes ?? []).map((pendiente) =>
+      pendiente.estado === "procesando" && !analizando.has(`${conversacion.id} ${pendiente.url}`)
+        ? { ...pendiente, estado: "error", mensaje: "Se cortó mientras se analizaba: probá de nuevo." }
+        : pendiente,
+    );
 
   function guardar(conversacion) {
     clearTimeout(programados.get(conversacion.id));
@@ -263,9 +288,14 @@ export function crearApp({ config, acceso, investigador, almacen, generarPDF, sa
 
   function lanzar(conversacion, persona, tarea, { esInvestigacion, retomada = false }) {
     const control = new AbortController();
+    // El texto del informe no va al chat (Franco, 2026-11-16): queda en `conversacion.informe` y
+    // se lee con «Ver informe» o el PDF. Así tampoco viaja en cada conexión ni ocupa la base dos
+    // veces. El de las preguntas de seguimiento sí se muestra.
     const flujo = {
       signal: control.signal,
-      emitir: (tipo, datos) => registrar(conversacion, tipo, datos),
+      emitir: (tipo, datos) => {
+        if (!(esInvestigacion && tipo === "texto")) registrar(conversacion, tipo, datos);
+      },
     };
     Object.assign(conversacion, { control, ocupada: true });
     if (esInvestigacion) conversacion.estado = "en-curso";
@@ -291,7 +321,11 @@ export function crearApp({ config, acceso, investigador, almacen, generarPDF, sa
         if (resultado === "fallida") console.error(error);
       }
       Object.assign(conversacion, { control: null, ocupada: false });
-      if (esInvestigacion) conversacion.estado = ESTADO_FINAL[resultado];
+      // Si falla al rehacer un informe, el anterior sigue valiendo: queda «lista».
+      if (esInvestigacion) {
+        conversacion.estado =
+          resultado !== "completa" && conversacion.informe ? "lista" : ESTADO_FINAL[resultado];
+      }
       // Con el estado ya final, el aviso dice si se puede retomar: la página muestra el botón al
       // momento, sin esperar a reconectarse.
       const retomar = { retomable: retomable(conversacion) };
@@ -339,7 +373,10 @@ export function crearApp({ config, acceso, investigador, almacen, generarPDF, sa
     if (req.method === "OPTIONS") return res.sendStatus(204);
     next();
   });
-  app.use(express.json({ limit: "20kb" }));
+  // Los pedidos son chicos; solo el contenido de una fuente agregada a mano puede ser grande y
+  // trae su propio límite (ver la ruta de pendientes).
+  const jsonChico = express.json({ limit: "20kb" });
+  app.use((req, res, next) => (req.path.endsWith("/pendientes") ? next() : jsonChico(req, res, next)));
   app.use(express.static(ruta("../public")));
   for (const [nombre, archivo] of Object.entries(VENDOR)) {
     app.get(`/vendor/${nombre}`, (req, res) => res.sendFile(ruta(`../${archivo}`)));
@@ -421,7 +458,12 @@ export function crearApp({ config, acceso, investigador, almacen, generarPDF, sa
     const conversacion = await cargar(req, res, req.params.id);
     if (!conversacion) return;
     const enviar = abrirFlujo(res);
-    for (const { tipo, datos } of conversacion.eventos) enviar(tipo, datos);
+    // Las guardadas antes de ese cambio tienen el informe en el primer turno: no se manda.
+    let preguntas = 0;
+    for (const { tipo, datos } of conversacion.eventos) {
+      if (tipo === "pregunta") preguntas++;
+      if (!(tipo === "texto" && preguntas <= 1)) enviar(tipo, datos);
+    }
     // Marca el fin de la repetición; si no está ocupada y el último turno no terminó, el
     // servidor se reinició a mitad de camino.
     enviar("listo", { ocupada: conversacion.ocupada, retomable: retomable(conversacion) });
@@ -471,6 +513,109 @@ export function crearApp({ config, acceso, investigador, almacen, generarPDF, sa
         }
         return investigador.investigar(conversacion, flujo, { retomar: true });
       },
+      { esInvestigacion: true, retomada: true },
+    );
+    guardar(conversacion);
+    res.status(202).json({ conversacion: conversacion.id });
+  });
+
+  // Contenido de una fuente que no se pudo leer: texto pegado (JSON) o su PDF. Se responde enseguida
+  // y se analiza aparte; «Ver informe» consulta el estado hasta que termina.
+  app.post(
+    "/api/conversaciones/:id/pendientes",
+    exigirSesion,
+    express.json({ limit: "5mb" }),
+    express.raw({ type: "application/pdf", limit: "20mb" }),
+    async (req, res) => {
+      const conversacion = await cargar(req, res, req.params.id);
+      if (!conversacion) return;
+      const esPDF = Buffer.isBuffer(req.body);
+      const url = esPDF ? req.query.url : req.body?.url;
+      const iguales = (conversacion.pendientes ?? []).filter((pendiente) => pendiente.url === url);
+      if (!iguales.length) {
+        return res.status(404).json({ error: "Esa fuente no está entre las que hay que revisar." });
+      }
+      const clave = `${conversacion.id} ${url}`;
+      if (conversacion.ocupada) {
+        return res.status(409).json({ error: "Esperá a que termine lo que está en curso." });
+      }
+      if (analizando.has(clave)) {
+        return res.status(409).json({ error: "Esa fuente ya se está analizando." });
+      }
+      if (iguales[0].estado === "agregada") {
+        return res.status(409).json({ error: "Esa fuente ya se agregó." });
+      }
+      const texto = esPDF ? null : typeof req.body?.texto === "string" ? req.body.texto.trim() : "";
+      if (esPDF ? !req.body.length : texto.length < MINIMO_AGREGADO) {
+        return res.status(400).json({
+          error: `Pegá el texto de la fuente (al menos ${MINIMO_AGREGADO} caracteres) o subí su PDF.`,
+        });
+      }
+      const marcar = (datos) => {
+        for (const pendiente of iguales) {
+          delete pendiente.mensaje;
+          Object.assign(pendiente, datos);
+        }
+      };
+      marcar({ estado: "procesando" });
+      analizando.add(clave);
+      res.status(202).json({ estado: "procesando" });
+      try {
+        let contenido = texto;
+        if (esPDF) {
+          contenido = (await extraerTextoPDF(req.body)).texto.trim();
+          if (contenido.length < MINIMO_AGREGADO) {
+            throw new ErrorPDF(
+              "El PDF no tiene texto que se pueda leer (puede ser un escaneo): copiá su texto y pegalo.",
+            );
+          }
+        }
+        const fuente = await investigador.agregarContenido(
+          conversacion,
+          { url, titulo: iguales[0].titulo, texto: contenido },
+          { signal: new AbortController().signal, alEsperar: () => {} },
+        );
+        marcar(
+          fuente
+            ? { estado: "agregada", fuente: fuente.n }
+            : {
+                estado: "sin-aporte",
+                mensaje: "El modelo no encontró en ese contenido información sobre el tema.",
+              },
+        );
+      } catch (error) {
+        if (!(error instanceof ErrorPDF)) console.error(error);
+        marcar({
+          estado: "error",
+          mensaje:
+            error instanceof ErrorPDF
+              ? error.message
+              : "No se pudo analizar el contenido. Probá de nuevo en un rato.",
+        });
+      } finally {
+        analizando.delete(clave);
+        guardar(conversacion);
+      }
+    },
+  );
+
+  // Vuelve a redactar el informe sumando las fuentes agregadas a mano, sin repetir búsquedas.
+  app.post("/api/conversaciones/:id/rehacer", exigirSesion, async (req, res) => {
+    const conversacion = await cargar(req, res, req.params.id);
+    if (!conversacion) return;
+    if (!conversacion.informe || conversacion.ocupada) {
+      return res.status(409).json({ error: "Esperá a que termine lo que está en curso." });
+    }
+    if ([...analizando].some((clave) => clave.startsWith(`${conversacion.id} `))) {
+      return res.status(409).json({ error: "Esperá a que se terminen de analizar las fuentes agregadas." });
+    }
+    if (!paraRehacer(conversacion)) {
+      return res.status(409).json({ error: "No hay fuentes nuevas para sumar al informe." });
+    }
+    lanzar(
+      conversacion,
+      req.persona,
+      (flujo) => investigador.investigar(conversacion, flujo, { rehacer: true }),
       { esInvestigacion: true, retomada: true },
     );
     guardar(conversacion);
@@ -556,7 +701,9 @@ export function crearApp({ config, acceso, investigador, almacen, generarPDF, sa
         ...(fecha && { fecha }),
       })),
       intercambios: conversacion.intercambios,
-      pendientes: conversacion.pendientes ?? [],
+      pendientes: pendientesDe(conversacion),
+      paraRehacer: paraRehacer(conversacion),
+      ocupada: Boolean(conversacion.ocupada),
       datos: datosDeInvestigacion(conversacion.eventos),
     });
   });

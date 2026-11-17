@@ -339,3 +339,31 @@ test("papers: primero la búsqueda semántica y, si falla, la común", async () 
   }
   assert.deepEqual(parametros, ["semántica", "común"]);
 });
+
+test("fuentes: un título ilegible se reemplaza por la dirección acortada, con el mismo enlace", async () => {
+  const { direccionCorta, tituloLegible } = await import("../public/direcciones.js");
+  assert.equal(tituloLegible("2026180-240GW --"), false);
+  assert.equal(tituloLegible(""), false);
+  assert.equal(tituloLegible("Caixin Global"), true);
+  assert.equal(tituloLegible("光伏装机"), true, "en la página los títulos en chino se ven bien");
+  assert.equal(direccionCorta("https://www.iea.org/reports/solar-pv/?x=1"), "iea.org/reports/solar-pv");
+  const larga = direccionCorta(`https://a.test/${"x".repeat(100)}`);
+  assert.equal(larga.length, 60);
+  assert.ok(larga.endsWith("…"));
+  const lista = listaDeFuentes(
+    [
+      { n: 1, url: "https://a.test/uno", titulo: "   " },
+      { n: 2, url: "https://b.test/dos", titulo: "Informe anual" },
+    ],
+    "[1][2]",
+  );
+  assert.match(lista, /- \*\*1\.\*\* \[a\.test\/uno\]\(https:\/\/a\.test\/uno\)/);
+  assert.match(lista, /- \*\*2\.\*\* \[Informe anual\]/);
+});
+
+test("PDF: los informes viejos pierden la lista de fuentes para revisar a mano", async () => {
+  const { sinPendientes } = await import("../src/titulos.js");
+  const viejo = "# T\n\n## Resumen\n\nTexto [1].\n\n## Fuentes\n\n- **1.** [A](https://a.test)\n\n## Fuentes para revisar a mano\n\n- [B](https://b.test) — respondió 403\n";
+  assert.equal(sinPendientes(viejo), "# T\n\n## Resumen\n\nTexto [1].\n\n## Fuentes\n\n- **1.** [A](https://a.test)\n");
+  assert.equal(sinPendientes("# T\n\nsin lista\n"), "# T\n\nsin lista\n");
+});

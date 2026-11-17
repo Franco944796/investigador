@@ -108,14 +108,14 @@ test("investigación en segundo plano, seguimiento, PDF, historial y límite dia
   assert.equal(motivos.filter((motivo) => motivo === "respondió 403").length, 3);
   assert.equal(motivos.filter((motivo) => motivo === "no aporta al tema").length, 3);
 
-  const informe = textoDe(eventos);
+  assert.equal(textoDe(eventos), "", "el informe no va al chat");
+  const { informe } = await (await ana.pedir(`/api/conversaciones/${conversacion}/informe`)).json();
   assert.ok(informe.startsWith("# Informe de prueba"));
   assert.ok(!informe.includes("plan interno"), "el razonamiento del modelo no se muestra");
   assert.match(informe, /## Fuentes\n\n- \*\*1\.\*\* \[.+\]\(https:\/\/ejemplo\.test\/.+\)\n- \*\*2\.\*\*/);
   assert.ok(!informe.includes("**3.**"), "solo se listan las fuentes citadas");
   const repeticion = (await ana.eventos(conversacion)).eventos;
-  assert.equal(repeticion.filter((e) => e.tipo === "texto").length, 1, "el texto se guarda unido");
-  assert.equal(textoDe(repeticion), informe);
+  assert.equal(textoDe(repeticion), "", "tampoco al volver a conectarse");
 
   const seguir = await ana.pedir(`/api/conversaciones/${conversacion}/preguntas`, {
     metodo: "POST",
@@ -196,7 +196,9 @@ test("el historial sobrevive a un reinicio del servidor y se puede borrar", asyn
   const repetidos = (await despues.eventos(conversacion, { hastaListo: true })).eventos;
   const sinTexto = (lista) => lista.filter((evento) => !["texto", "listo"].includes(evento.tipo));
   assert.deepEqual(sinTexto(repetidos.slice(0, -1)), sinTexto(original));
-  assert.equal(textoDe(repetidos), textoDe(original));
+  const { informe } = await (await despues.pedir(`/api/conversaciones/${conversacion}/informe`)).json();
+  assert.equal(informe, (await almacen.obtener(conversacion)).datos.informe);
+  assert.ok(informe.startsWith("# Informe"));
   assert.deepEqual(repetidos.at(-1), { tipo: "listo", datos: { ocupada: false, retomable: false } });
 
   const pdf = await despues.pedir(`/api/informe/${conversacion}`);
@@ -317,6 +319,8 @@ test("retomar: una interrumpida se ofrece para retomar, sigue en el mismo turno 
         { tipo: "fuente", datos: { id: 1, url: "https://ejemplo.test/leida", estado: "leyendo", consulta: 1 } },
         { tipo: "fuente", datos: { id: 1, url: "https://ejemplo.test/leida", estado: "lista", n: 1 } },
         { tipo: "fuente", datos: { id: 2, url: "https://ejemplo.test/a-medias", estado: "leyendo", consulta: 1 } },
+        // Así se guardaba antes el informe en el chat: ya no se manda.
+        { tipo: "texto", datos: { delta: "# Texto viejo del informe" } },
       ],
       rendimiento: [{ texto: "primera consulta", destino: "web", nuevas: 2, leidas: 1, sinAcceso: 0 }],
       destinos: { dominios: [], academico: false, libros: false },
@@ -342,6 +346,7 @@ test("retomar: una interrumpida se ofrece para retomar, sigue en el mismo turno 
   await ana.entrar("codigo-de-ana");
 
   const antes = (await ana.eventos("cortada", { hastaListo: true })).eventos;
+  assert.equal(textoDe(antes), "", "el informe guardado a la vieja usanza no se manda");
   assert.deepEqual(antes.at(-1), { tipo: "listo", datos: { ocupada: false, retomable: true } });
 
   assert.equal((await ana.pedir("/api/conversaciones/cortada/retomar", { metodo: "POST" })).status, 202);
@@ -355,7 +360,8 @@ test("retomar: una interrumpida se ofrece para retomar, sigue en el mismo turno 
   });
   assert.equal(despues.filter((e) => e.tipo === "pregunta").length, 1, "sigue en el mismo turno");
   assert.equal(despues.at(-1).tipo, "fin");
-  assert.ok(textoDe(despues).startsWith("# Informe de prueba"));
+  const { informe } = await (await ana.pedir("/api/conversaciones/cortada/informe")).json();
+  assert.ok(informe.startsWith("# Informe de prueba"));
   const lista = await (await ana.pedir("/api/conversaciones")).json();
   assert.equal(lista[0].estado, "lista");
   assert.equal((await ana.pedir("/api/conversaciones/cortada/retomar", { metodo: "POST" })).status, 409);
@@ -392,4 +398,70 @@ test("retomar: una detenida a mano también se puede retomar", async () => {
   const final = (await ana.eventos(conversacion, { terminales: 2 })).eventos;
   assert.ok(final.some((e) => e.tipo === "retomada"));
   assert.equal(final.at(-1).tipo, "fin");
+});
+
+test("pendientes: se agrega su contenido (texto o PDF), se analiza aparte y se rehace el informe", async () => {
+  const propio = await iniciarLLMSimulado();
+  after(() => propio.cerrar());
+  const levantado = await levantar({
+    acceso: crearAcceso("ana:codigo-de-ana:0"),
+    almacen: crearAlmacenMemoria(),
+    urlLLM: propio.urlBase,
+    entorno: ENTORNO,
+  });
+  cerrar.push(levantado.servidor);
+  const ana = cliente(levantado.base);
+  await ana.entrar("codigo-de-ana");
+  const { conversacion } = await (await ana.investigar("Tema con pendientes")).json();
+  await ana.eventos(conversacion);
+  const ruta = (final) => `/api/conversaciones/${conversacion}${final}`;
+  const informe = async () => (await ana.pedir(ruta("/informe"))).json();
+
+  const antes = await informe();
+  assert.ok(!antes.informe.includes("revisar a mano"), "la lista no va en el informe");
+  assert.equal(antes.paraRehacer, 0);
+  const [primera, segunda] = [...new Set(antes.pendientes.map((pendiente) => pendiente.url))];
+  assert.ok(primera && segunda);
+
+  const agregar = (cuerpo) => ana.pedir(ruta("/pendientes"), { metodo: "POST", cuerpo });
+  assert.equal((await agregar({ url: "https://otra.test/x", texto: "x".repeat(300) })).status, 404);
+  assert.equal((await agregar({ url: primera, texto: "muy corto" })).status, 400);
+  const texto = "Mediciones del ensayo: el dato 10 y el dato 20, con el detalle del método. ".repeat(5);
+  assert.equal((await agregar({ url: primera, texto })).status, 202);
+
+  const esperar = async (condicion) => {
+    for (let i = 0; i < 100; i++) {
+      const datos = await informe();
+      if (condicion(datos)) return datos;
+      await new Promise((listo) => setTimeout(listo, 100));
+    }
+    throw new Error("no terminó a tiempo");
+  };
+  let datos = await esperar((d) => d.pendientes.find((p) => p.url === primera).estado !== "procesando");
+  const agregada = datos.pendientes.find((pendiente) => pendiente.url === primera);
+  assert.equal(agregada.estado, "agregada");
+  assert.equal(datos.fuentes.at(-1).n, agregada.fuente);
+  assert.equal(datos.paraRehacer, 1);
+  assert.equal((await agregar({ url: primera, texto })).status, 409, "no se agrega dos veces");
+
+  const { generarPDF } = await import("../src/pdf.js");
+  const pdf = await generarPDF({ titulo: "Paper", markdown: `# Paper\n\n## Datos\n\n${texto}`, fuentes: [] });
+  const subida = await fetch(`${levantado.base}${ruta("/pendientes")}?url=${encodeURIComponent(segunda)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/pdf", Authorization: ana.cabecera() },
+    body: pdf,
+  });
+  assert.equal(subida.status, 202);
+  datos = await esperar((d) => d.pendientes.find((p) => p.url === segunda).estado !== "procesando");
+  assert.equal(datos.pendientes.find((pendiente) => pendiente.url === segunda).estado, "agregada");
+  assert.equal(datos.paraRehacer, 2);
+
+  assert.equal((await ana.pedir(ruta("/rehacer"), { metodo: "POST" })).status, 202);
+  const final = (await ana.eventos(conversacion, { terminales: 2 })).eventos;
+  assert.ok(final.some((e) => e.tipo === "retomada"));
+  assert.ok(final.some((e) => e.tipo === "aviso" && /^Rehago el informe .*2 agregadas a mano/.test(e.datos.texto)));
+  assert.equal(final.at(-1).tipo, "fin");
+  datos = await informe();
+  assert.equal(datos.paraRehacer, 0);
+  assert.equal((await ana.pedir(ruta("/rehacer"), { metodo: "POST" })).status, 409);
 });

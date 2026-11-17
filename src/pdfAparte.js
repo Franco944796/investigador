@@ -1,4 +1,5 @@
 import { fork } from "node:child_process";
+import { separarTitulo, sinPendientes } from "./titulos.js";
 
 export class ErrorPDF extends Error {}
 
@@ -25,8 +26,25 @@ export function crearGeneradorAparte({
   maxPorParte = 250000,
 } = {}) {
   let fila = Promise.resolve();
+  const MENSAJES = {
+    armar: {
+      lento: "Armar el PDF tardó demasiado. Probá de nuevo en un rato.",
+      fallo: (detalle) => `No se pudo armar el PDF: ${detalle}`,
+      memoria:
+        "El informe es demasiado grande para armar el PDF con la memoria del servidor. Podés descargarlo en HTML desde «Ver informe».",
+      otro: "No se pudo armar el PDF. Probá de nuevo en un rato.",
+    },
+    leer: {
+      lento: "Leer el PDF tardó demasiado: copiá su texto y pegalo.",
+      fallo: (detalle) => `No se pudo leer el PDF (${detalle}): copiá su texto y pegalo.`,
+      memoria:
+        "El PDF es demasiado grande para leerlo con la memoria del servidor: copiá su texto y pegalo.",
+      otro: "No se pudo leer el PDF: copiá su texto y pegalo.",
+    },
+  };
   const enProceso = (pedido) =>
     new Promise((resolver, rechazar) => {
+      const mensajes = MENSAJES[pedido.tarea === "texto" ? "leer" : "armar"];
       const hijo = fork(new URL("./pdfProceso.js", import.meta.url), [], {
         execArgv: [`--max-old-space-size=${memoriaMB}`],
         serialization: "advanced",
@@ -41,44 +59,62 @@ export function crearGeneradorAparte({
         if (error) rechazar(error);
         else resolver(pdf);
       };
-      const reloj = setTimeout(
-        () => terminar(new ErrorPDF("Armar el PDF tardó demasiado. Probá de nuevo en un rato.")),
-        limiteMs,
-      );
+      const reloj = setTimeout(() => terminar(new ErrorPDF(mensajes.lento)), limiteMs);
       let errores = "";
       hijo.stderr.on("data", (trozo) => (errores = (errores + trozo).slice(-2000)));
       hijo.on("message", (mensaje) =>
         mensaje.error
-          ? terminar(new ErrorPDF(`No se pudo armar el PDF: ${mensaje.error}`))
-          : terminar(null, Buffer.from(mensaje.pdf)),
+          ? terminar(new ErrorPDF(mensajes.fallo(mensaje.error)))
+          : terminar(null, mensaje.resultado),
       );
       hijo.on("exit", (codigo) => {
         if (terminado) return;
         const sinMemoria = /heap out of memory|Reached heap limit/.test(errores);
         if (!sinMemoria)
           console.error(`El proceso del PDF terminó con código ${codigo}: ${errores}`);
-        terminar(
-          new ErrorPDF(
-            sinMemoria
-              ? "El informe es demasiado grande para armar el PDF con la memoria del servidor. Podés descargarlo en HTML desde «Ver informe»."
-              : "No se pudo armar el PDF. Probá de nuevo en un rato.",
-          ),
-        );
+        terminar(new ErrorPDF(sinMemoria ? mensajes.memoria : mensajes.otro));
       });
       hijo.send(pedido);
     });
+  // Por partes: cada una dice en qué página (de ella) cae cada título; sumando las páginas de las
+  // anteriores queda la página en el cuerpo entero, que es lo que muestra el índice.
   const armar = async (datos) => {
-    const partes = partesDelInforme(datos.markdown, maxPorParte);
-    if (partes.length === 1) return enProceso({ armar: datos });
-    const pdfs = [];
-    for (const markdown of partes) {
-      pdfs.push(await enProceso({ armar: { ...datos, markdown, conPie: false } }));
+    const separado = separarTitulo(sinPendientes(datos.markdown));
+    const partes = partesDelInforme(separado.cuerpo, maxPorParte);
+    if (partes.length === 1) {
+      return Buffer.from(await enProceso({ tarea: "armar", datos }));
     }
-    return enProceso({ unir: { partes: pdfs, titulo: datos.titulo } });
+    const pdfs = [];
+    const titulos = [];
+    let previas = 0;
+    for (const markdown of partes) {
+      const parte = await enProceso({
+        tarea: "cuerpo",
+        datos: { markdown, fuentes: datos.fuentes },
+      });
+      pdfs.push(parte.pdf);
+      titulos.push(
+        ...parte.titulos.map((titulo) => ({ ...titulo, pagina: titulo.pagina + previas })),
+      );
+      previas += parte.paginas;
+    }
+    const portada = await enProceso({
+      tarea: "portada",
+      datos: { titulo: separado.titulo ?? datos.titulo, titulos },
+    });
+    const unido = await enProceso({
+      tarea: "unir",
+      datos: { partes: [portada, ...pdfs], titulo: datos.titulo },
+    });
+    return Buffer.from(unido);
   };
-  return (datos) => {
-    const resultado = fila.then(() => armar(datos));
+  const enFila = (tarea) => {
+    const resultado = fila.then(tarea);
     fila = resultado.catch(() => {});
     return resultado;
   };
+  const generar = (datos) => enFila(() => armar(datos));
+  // Usa la misma fila que los PDF: leer uno grande también pide memoria.
+  generar.extraerTexto = (bytes) => enFila(() => enProceso({ tarea: "texto", datos: { bytes } }));
+  return generar;
 }
