@@ -7,7 +7,7 @@ import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
 import express from "express";
-import { crearConversacion, ErrorInvestigacion, normalizarUrl } from "./investigador.js";
+import { crearConversacion, ErrorInvestigacion, normalizarUrl, numeracionContinua } from "./investigador.js";
 import { ErrorLLM } from "./llm.js";
 import { ErrorPDF } from "./pdfAparte.js";
 import { nombreDeArchivo, tituloDelPedido } from "./titulos.js";
@@ -697,11 +697,8 @@ export function crearApp({
     let pdf = guardado?.informe === conversacion.informe ? guardado.pdf : null;
     if (!pdf) {
       try {
-        pdf = await generarPDF({
-          titulo: tituloDelPedido(conversacion.tema),
-          markdown: conversacion.informe,
-          fuentes: conversacion.fuentes,
-        });
+        const { informe, fuentes } = numeracionContinua(conversacion);
+        pdf = await generarPDF({ titulo: tituloDelPedido(conversacion.tema), markdown: informe, fuentes });
       } catch (error) {
         if (error instanceof ErrorPDF) return res.status(503).json({ error: error.message });
         throw error;
@@ -729,21 +726,24 @@ export function crearApp({
     if (!conversacion.informe) {
       return res.status(409).json({ error: "El informe todavía no está terminado." });
     }
+    const { informe, fuentes, intercambios, numeros } = numeracionContinua(conversacion);
     res.json({
       titulo: tituloDelPedido(conversacion.tema),
       tema: conversacion.tema,
       creada: conversacion.creada,
       archivo: nombreDeArchivo(conversacion.tema).replace(/\.pdf$/, ""),
-      informe: conversacion.informe,
-      fuentes: conversacion.fuentes.map(({ n, url, titulo, tipo, fecha }) => ({
+      informe,
+      fuentes: fuentes.map(({ n, url, titulo, tipo, fecha }) => ({
         n,
         url,
         titulo,
         ...(tipo && { tipo }),
         ...(fecha && { fecha }),
       })),
-      intercambios: conversacion.intercambios,
-      pendientes: pendientesDe(conversacion),
+      intercambios,
+      pendientes: pendientesDe(conversacion).map((pendiente) =>
+        pendiente.estado === "agregada" ? { ...pendiente, fuente: numeros.get(pendiente.fuente) } : pendiente,
+      ),
       paraRehacer: paraRehacer(conversacion),
       ocupada: Boolean(conversacion.ocupada),
       datos: datosDeInvestigacion(conversacion.eventos),

@@ -13,7 +13,7 @@ import {
   resumenDe,
 } from "../src/busqueda.js";
 import { destinosDe } from "../src/investigador.js";
-import { listaDeFuentes, normalizarUrl } from "../src/investigador.js";
+import { listaDeFuentes, normalizarUrl, numeracionContinua } from "../src/investigador.js";
 import { esDireccionPrivada, extraerTexto } from "../src/lector.js";
 import { ErrorFormato, extraerJSON, quitarPensamiento } from "../src/llm.js";
 import { aptoParaPDF, generarPDF, nombreDeArchivo, tituloDelPedido } from "../src/pdf.js";
@@ -131,6 +131,38 @@ test("fuentes: URLs equivalentes se unifican y la lista respeta los números cit
     "\n\n## Fuentes\n\n- **2.** [Dos beta](https://a.org/2_%28x%29)\n- **3.** [Tres](https://a.org/3)\n",
   );
   assert.match(listaDeFuentes(fuentes, "Sin citas."), /\*\*1\.\*\*[\s\S]+\*\*3\.\*\*/);
+});
+
+test("Fuentes: se renumeran 1, 2, 3… por orden de primera cita, sin saltear números", () => {
+  const fuentes = [2, 5, 7, 9, 12].map((n) => ({ n, titulo: `Fuente ${n}`, url: `https://a.org/${n}` }));
+  const grafico = '```grafico\n{"tipo": "barras", "datos": [{"valor": 1, "cita": 12}]}\n```';
+  const cuerpo = `# Título\n\nPrimero [7], luego [2] y otra vez [7]. Año [2020] no es cita.\n\n${grafico}`;
+  const informe = cuerpo + listaDeFuentes(fuentes, cuerpo);
+  const resultado = numeracionContinua({
+    informe,
+    fuentes,
+    intercambios: [{ pregunta: "¿Y?", respuesta: "Nueva [9] y vieja [2]." }],
+  });
+  assert.match(resultado.informe, /Primero \[1\], luego \[2\] y otra vez \[1\]\. Año \[2020\]/);
+  assert.match(resultado.informe, /"cita": 3/);
+  assert.match(
+    resultado.informe,
+    /## Fuentes\n\n- \*\*1\.\*\* \[Fuente 7\][^\n]+\n- \*\*2\.\*\* \[Fuente 2\][^\n]+\n- \*\*3\.\*\* \[Fuente 12\][^\n]+\n$/,
+  );
+  assert.equal(resultado.intercambios[0].respuesta, "Nueva [4] y vieja [2].");
+  assert.deepEqual(
+    resultado.fuentes.map((fuente) => [fuente.n, fuente.titulo]),
+    [
+      [1, "Fuente 7"],
+      [2, "Fuente 2"],
+      [3, "Fuente 12"],
+      [4, "Fuente 9"],
+      [5, "Fuente 5"],
+    ],
+  );
+  assert.equal(fuentes[0].n, 2, "no modifica las fuentes guardadas");
+  assert.equal(resultado.numeros.get(5), 5);
+  assert.equal(numeracionContinua({ informe: "Sin lista [1].", fuentes: fuentes.slice(0, 1) }).informe, "Sin lista [1].");
 });
 
 test("PDF: se genera con tablas, listas, citas y caracteres especiales", async () => {

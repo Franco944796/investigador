@@ -396,6 +396,48 @@ export function listaDeFuentes(fuentes, cuerpo) {
   return `\n\n## Fuentes\n\n${lineas.join("\n")}\n`;
 }
 
+const CITA = /\[(\d+)\]|("cita"\s*:\s*)(\d+)/g;
+
+// Las fuentes se numeran al encontrarlas y el informe cita solo algunas, así que la lista saltaba
+// números. Para mostrarlo (HTML y PDF) se renumeran 1, 2, 3… por orden de primera cita: el texto
+// (con los gráficos), después el seguimiento y al final las no citadas. Lo guardado no cambia,
+// porque el modelo sigue citando con los números originales en las preguntas de seguimiento.
+export function numeracionContinua({ informe, fuentes, intercambios }) {
+  const respuestas = intercambios ?? [];
+  const corte = informe.lastIndexOf("\n## Fuentes\n");
+  const cuerpo = corte >= 0 ? informe.slice(0, corte).trimEnd() : informe;
+  const existentes = new Set(fuentes.map((fuente) => fuente.n));
+  const numeros = new Map();
+  const numerar = (n) => {
+    if (existentes.has(n) && !numeros.has(n)) numeros.set(n, numeros.size + 1);
+  };
+  for (const texto of [cuerpo, ...respuestas.map((intercambio) => intercambio.respuesta ?? "")]) {
+    for (const cita of texto.matchAll(CITA)) numerar(Number(cita[1] ?? cita[3]));
+  }
+  for (const fuente of fuentes) numerar(fuente.n);
+
+  const renumerar = (texto) =>
+    texto.replace(CITA, (cita, corchete, clave, valor) => {
+      const numero = numeros.get(Number(corchete ?? valor));
+      if (!numero) return cita;
+      return corchete ? `[${numero}]` : `${clave}${numero}`;
+    });
+  const texto = renumerar(cuerpo);
+  const renumeradas = fuentes
+    .map((fuente) => ({ ...fuente, n: numeros.get(fuente.n) }))
+    .sort((a, b) => a.n - b.n);
+  return {
+    informe: corte >= 0 ? texto + listaDeFuentes(renumeradas, texto) : texto,
+    fuentes: renumeradas,
+    intercambios: respuestas.map((intercambio) =>
+      typeof intercambio.respuesta === "string"
+        ? { ...intercambio, respuesta: renumerar(intercambio.respuesta) }
+        : intercambio,
+    ),
+    numeros,
+  };
+}
+
 export function crearConversacion(id, dueno, tema) {
   return {
     id,

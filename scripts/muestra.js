@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { conectarPostgres } from "../src/almacen.js";
 import { datosDeInvestigacion } from "../src/app.js";
+import { numeracionContinua } from "../src/investigador.js";
 import { crearGeneradorAparte } from "../src/pdfAparte.js";
 import { nombreDeArchivo, sinPendientes, tituloDelPedido } from "../src/titulos.js";
 
@@ -30,8 +31,16 @@ if (!fila?.datos.informe) {
 }
 
 const { datos } = fila;
-const informe = sinPendientes(datos.informe);
-const fuentes = datos.fuentes.map(({ n, url, titulo, tipo, fecha }) => ({
+const {
+  informe,
+  fuentes: renumeradas,
+  intercambios,
+} = numeracionContinua({
+  informe: sinPendientes(datos.informe),
+  fuentes: datos.fuentes,
+  intercambios: datos.intercambios,
+});
+const fuentes = renumeradas.map(({ n, url, titulo, tipo, fecha }) => ({
   n,
   url,
   titulo,
@@ -45,7 +54,7 @@ const muestra = {
   archivo: nombreDeArchivo(fila.tema).replace(/\.pdf$/, ""),
   informe,
   fuentes,
-  intercambios: datos.intercambios ?? [],
+  intercambios,
   datos: datosDeInvestigacion(datos.eventos ?? []),
 };
 
@@ -58,7 +67,7 @@ const generarPDF = crearGeneradorAparte({ memoriaMB: 1024, limiteMs: 20 * 60 * 1
 const pdf = await generarPDF({
   titulo: muestra.titulo,
   markdown: informe,
-  fuentes: datos.fuentes,
+  fuentes: renumeradas,
   firma: FIRMA,
 });
 writeFileSync(join(SALIDA, "informe.pdf"), pdf);
