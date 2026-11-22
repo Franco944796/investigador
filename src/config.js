@@ -97,6 +97,16 @@ export function leerConfig(env = process.env) {
       minBusquedas: entero(env, "MIN_BUSQUEDAS", 60),
       busquedasSinAporte: entero(env, "BUSQUEDAS_SIN_APORTE", 20),
       papersSinAporte: entero(env, "PAPERS_SIN_APORTE", 100),
+      // Casilla «Solo web» (Franco, 2026-11-22), solo para las personas de PERSONAS_SOLO_WEB: sin
+      // papers ni libros y con más búsquedas web. Una sola gasta 1/4 de la cuota mensual de Tavily.
+      soloWeb: {
+        personas: (env.PERSONAS_SOLO_WEB || "")
+          .split(",")
+          .map((nombre) => nombre.trim())
+          .filter(Boolean),
+        maxBusquedas: entero(env, "MAX_BUSQUEDAS_SOLO_WEB", 250),
+        minBusquedas: entero(env, "MIN_BUSQUEDAS_SOLO_WEB", 150),
+      },
       // 0 = sin tope.
       maxFuentes: entero(env, "MAX_FUENTES", 0) || Infinity,
       multilingue: true,

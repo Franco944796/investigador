@@ -24,6 +24,10 @@ services:
         generateValue: true
       - key: CODIGOS_ACCESO
         sync: false
+      # Nombres (de CODIGOS_ACCESO, separados por coma) que ven la casilla «Solo web»: hasta 250
+      # búsquedas web, 1/4 de la cuota mensual gratis de Tavily.
+      - key: PERSONAS_SOLO_WEB
+        sync: false
       # Cadena de conexión de Neon (Postgres): guarda el historial de investigaciones.
       - key: DATABASE_URL
         sync: false

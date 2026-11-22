@@ -28,6 +28,7 @@ const estado = {
   conInforme: false,
   enVivo: false,
   flujo: null,
+  soloWeb: false,
 };
 
 const CAMPOS = ["Pregunta", "Contexto", "Aspectos", "Excluir", "Entrega", "Fuentes"];
@@ -67,6 +68,10 @@ function mostrarApp(sesion) {
   app.hidden = false;
   $("#nombre").textContent = sesion.nombre;
   mostrarUso(sesion.uso);
+  estado.soloWeb = Boolean(sesion.soloWeb);
+  if (sesion.soloWeb) {
+    $("#texto-solo-web").textContent = `Solo web: hasta ${sesion.soloWeb.busquedas} búsquedas, sin papers ni libros`;
+  }
   irAlInicio();
 }
 
@@ -114,6 +119,9 @@ function actualizarRedactor() {
   botonEnviar.classList.toggle("principal", !estado.ocupada);
   botonEnviar.disabled = cerrada;
   texto.disabled = estado.ocupada || cerrada;
+  // Igual que MAX_TEMA y MAX_PREGUNTA en src/app.js.
+  texto.maxLength = enConversacion ? 2000 : 6000;
+  $("#opcion-solo-web").hidden = enConversacion || !estado.soloWeb;
   texto.placeholder = estado.ocupada
     ? "Investigando… podés cerrar la página"
     : cerrada
@@ -691,8 +699,9 @@ $("#redactor").addEventListener("submit", async (evento) => {
     } else {
       const { conversacion, uso } = await pedir("/api/investigar", {
         metodo: "POST",
-        cuerpo: { tema: contenido },
+        cuerpo: { tema: contenido, ...(estado.soloWeb && $("#solo-web").checked && { soloWeb: true }) },
       });
+      $("#solo-web").checked = false;
       mostrarUso(uso);
       abrirConversacion(conversacion);
       cargarHistorial();

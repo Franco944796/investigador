@@ -135,9 +135,13 @@ Fuentes: argentina.gob.ar, Google Scholar; preferir oficiales y argentinas.</pre
         <form id="redactor" class="redactor">
           <p id="aviso-redactor" class="aviso-redactor" role="alert" hidden></p>
           <div class="fila">
-            <textarea id="texto" rows="1" maxlength="2000" aria-label="Mensaje"></textarea>
+            <textarea id="texto" rows="1" maxlength="6000" aria-label="Mensaje"></textarea>
             <button id="enviar" type="submit" class="boton principal">Investigar</button>
           </div>
+          <label id="opcion-solo-web" class="opcion-redactor" hidden>
+            <input id="solo-web" type="checkbox" />
+            <span id="texto-solo-web">Solo web</span>
+          </label>
         </form>
       </div>
     </div>

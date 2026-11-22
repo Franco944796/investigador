@@ -14,7 +14,9 @@ import { nombreDeArchivo, tituloDelPedido } from "./titulos.js";
 import { VENDOR } from "./vendor.js";
 
 const LATIDO_MS = 15000;
-const MAX_TEXTO = 2000;
+// El pedido de una investigación puede traer la plantilla completa; una pregunta de seguimiento, no.
+const MAX_TEMA = 6000;
+const MAX_PREGUNTA = 2000;
 // Con cientos de fuentes el registro pesa cerca de medio megabyte: reescribirlo cada 30 s durante
 // horas generaba más de 100 MB de escrituras en Neon por investigación.
 const GUARDADO_MS = 120000;
@@ -62,9 +64,9 @@ const leerToken = (req) => req.get("authorization")?.match(/^Bearer (.+)$/)?.[1]
 // puede falsificar desde afuera.
 const ipDe = (req, cabecera) => (cabecera && req.get(cabecera)?.trim()) || req.ip;
 
-function textoValido(valor) {
+function textoValido(valor, maximo) {
   const texto = typeof valor === "string" ? valor.trim() : "";
-  return texto.length >= 3 && texto.length <= MAX_TEXTO ? texto : null;
+  return texto.length >= 3 && texto.length <= maximo ? texto : null;
 }
 
 function crearCola(simultaneas) {
@@ -148,6 +150,7 @@ function aRegistro(conversacion) {
       idiomas: conversacion.idiomas,
       progreso: conversacion.progreso,
       fuentesEnInforme: conversacion.fuentesEnInforme,
+      soloWeb: conversacion.soloWeb,
     },
   };
 }
@@ -416,7 +419,12 @@ export function crearApp({
     next();
   };
 
-  const datosDeSesion = (persona) => ({ nombre: persona.nombre, uso: acceso.uso(persona) });
+  const puedeSoloWeb = (persona) => Boolean(opciones.soloWeb?.personas.includes(persona.nombre));
+  const datosDeSesion = (persona) => ({
+    nombre: persona.nombre,
+    uso: acceso.uso(persona),
+    soloWeb: puedeSoloWeb(persona) ? { busquedas: opciones.soloWeb.maxBusquedas } : null,
+  });
 
   app.post("/api/entrar", (req, res) => {
     const { persona, token, bloqueado } = acceso.entrar(req.body?.codigo, ipDe(req, config.cabeceraIp));
@@ -430,9 +438,13 @@ export function crearApp({
   app.get("/api/sesion", exigirSesion, (req, res) => res.json(datosDeSesion(req.persona)));
 
   app.post("/api/investigar", exigirSesion, (req, res) => {
-    const tema = textoValido(req.body?.tema);
+    const tema = textoValido(req.body?.tema, MAX_TEMA);
     if (!tema) {
-      return res.status(400).json({ error: `Escribí un tema de entre 3 y ${MAX_TEXTO} caracteres.` });
+      return res.status(400).json({ error: `Escribí un tema de entre 3 y ${MAX_TEMA} caracteres.` });
+    }
+    const soloWeb = req.body?.soloWeb === true;
+    if (soloWeb && !puedeSoloWeb(req.persona)) {
+      return res.status(403).json({ error: "Tu código no tiene habilitada la búsqueda solo web." });
     }
     // Hay un solo tipo; el campo queda para distinguir las guardadas antes (normal, profunda).
     const profundidad = "exhaustiva";
@@ -448,6 +460,7 @@ export function crearApp({
       estado: "en-curso",
       etapa: "",
       creada: Date.now(),
+      ...(soloWeb && { soloWeb }),
     });
     activas.set(conversacion.id, conversacion);
     registrar(conversacion, "pregunta", { texto: tema, profundidad });
@@ -499,9 +512,9 @@ export function crearApp({
   });
 
   app.post("/api/conversaciones/:id/preguntas", exigirSesion, async (req, res) => {
-    const pregunta = textoValido(req.body?.pregunta);
+    const pregunta = textoValido(req.body?.pregunta, MAX_PREGUNTA);
     if (!pregunta) {
-      return res.status(400).json({ error: `Escribí una pregunta de hasta ${MAX_TEXTO} caracteres.` });
+      return res.status(400).json({ error: `Escribí una pregunta de hasta ${MAX_PREGUNTA} caracteres.` });
     }
     const conversacion = await cargar(req, res, req.params.id);
     if (!conversacion) return;

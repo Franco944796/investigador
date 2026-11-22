@@ -386,6 +386,49 @@ test("sitios y papers: cada uno con su cupo; los sitios se dejan sin páginas nu
   assert.deepEqual(destinos.slice(0, 4), ["web", "web", "sitios", "academico"]);
 });
 
+test("solo web: sin OpenAlex aunque el plan pida papers, con su propio mínimo y tope de búsquedas web", async () => {
+  const web = [];
+  let ronda = 0;
+  const investigador = crearInvestigador({
+    llm: {
+      ...llmFijo,
+      completarJSON: async (mensajes) => {
+        if (!mensajes.at(-1).content.includes("La investigación sigue")) {
+          return { consultas: ["w0a", "w0b"], dirigidas: [{ texto: "paper", destino: "academico" }], academico: true };
+        }
+        ronda++;
+        return { consultas: [`alfa${ronda} beta${ronda}`, `gama${ronda} delta${ronda}`] };
+      },
+    },
+    opciones: {
+      ...OPCIONES,
+      consultasIniciales: 2,
+      consultasPorRonda: 2,
+      rondasExtra: 20,
+      maxBusquedas: 2,
+      maxAcademicas: 50,
+      busquedasSinAporte: 1,
+      soloWeb: { maxBusquedas: 8, minBusquedas: 6 },
+    },
+    // Sin resultados: pasado el mínimo, la primera búsqueda que no aporta corta la web.
+    buscar: async (consulta) => {
+      web.push(consulta);
+      return { resultados: web.length > 4 ? [] : [{ titulo: consulta, url: `https://a.test/${encodeURIComponent(consulta)}`, contenido: LARGO }] };
+    },
+    buscarAcademico: async () => assert.fail("solo web no busca papers"),
+    saldoAcademico: async () => assert.fail("solo web no consulta el saldo de OpenAlex"),
+    leerPagina: async () => assert.fail("no hace falta leer"),
+  });
+  const eventos = [];
+  const conversacion = Object.assign(crearConversacion("id", "ana", "Pregunta: papers científicos"), { soloWeb: true });
+  await investigador.investigar(conversacion, flujoDe(eventos));
+
+  assert.equal(web.length, 6, "llega al mínimo de solo web (6), no al tope normal (2)");
+  const avisos = eventos.filter((e) => e.tipo === "aviso").map((e) => e.datos.texto);
+  assert.ok(avisos.includes("Solo web: hasta 8 búsquedas web, sin papers ni libros."));
+  assert.ok(!avisos.some((texto) => /OpenAlex|Además busco/.test(texto)));
+});
+
 test("si el tema amerita libros, se buscan aparte de las búsquedas web", async () => {
   const libros = [];
   const web = [];

@@ -1046,6 +1046,24 @@ a.cita:hover {
     0 0 22px color-mix(in srgb, var(--acento) 38%, transparent);
 }
 
+.opcion-redactor {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding-inline: 8px;
+  color: var(--texto-suave);
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+
+.opcion-redactor input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--acento);
+}
+
 .aviso-redactor {
   margin: 0 0 8px;
   color: var(--error);

@@ -465,3 +465,33 @@ test("pendientes: se agrega su contenido (texto o PDF), se analiza aparte y se r
   assert.equal(datos.paraRehacer, 0);
   assert.equal((await ana.pedir(ruta("/rehacer"), { metodo: "POST" })).status, 409);
 });
+
+test("solo web: la casilla es solo para PERSONAS_SOLO_WEB y el pedido admite 6.000 caracteres", async () => {
+  const { servidor, base: direccion } = await levantar({
+    acceso: crearAcceso("ana:codigo-de-ana:0,beto:codigo-de-beto:0"),
+    almacen: crearAlmacenMemoria(),
+    urlLLM: llmSimulado.urlBase,
+    entorno: { ...ENTORNO, PERSONAS_SOLO_WEB: "beto" },
+  });
+  cerrar.push(servidor);
+  const ana = cliente(direccion);
+  const beto = cliente(direccion);
+  assert.equal((await (await ana.entrar("codigo-de-ana")).json()).soloWeb, null);
+  assert.deepEqual((await (await beto.entrar("codigo-de-beto")).json()).soloWeb, { busquedas: 250 });
+
+  const pedir = (quien, tema, soloWeb) => quien.pedir("/api/investigar", { metodo: "POST", cuerpo: { tema, soloWeb } });
+  assert.equal((await pedir(ana, "Tema de prueba", true)).status, 403);
+  assert.equal((await pedir(beto, "x".repeat(6001), true)).status, 400);
+
+  const pedido = await pedir(beto, `Pregunta: tema de prueba ${"x".repeat(5970)}`, true);
+  assert.equal(pedido.status, 202);
+  const { conversacion } = await pedido.json();
+  const { eventos } = await beto.eventos(conversacion);
+  assert.equal(eventos.at(-1).tipo, "fin");
+  assert.ok(eventos.some((e) => e.tipo === "aviso" && e.datos.texto.startsWith("Solo web: hasta 250 búsquedas web")));
+  const pregunta = await beto.pedir(`/api/conversaciones/${conversacion}/preguntas`, {
+    metodo: "POST",
+    cuerpo: { pregunta: "x".repeat(2001) },
+  });
+  assert.equal(pregunta.status, 400, "las preguntas de seguimiento siguen en 2.000");
+});

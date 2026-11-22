@@ -465,6 +465,15 @@ export function crearInvestigador({
   enlaceVivo = async () => true,
   opciones,
 }) {
+  const opcionesDe = (conversacion) =>
+    conversacion.soloWeb
+      ? {
+          ...opciones,
+          maxBusquedas: opciones.soloWeb.maxBusquedas,
+          minBusquedas: opciones.soloWeb.minBusquedas,
+          maxAcademicas: 0,
+        }
+      : opciones;
   // El texto de Tavily y el resumen de OpenAlex siguen ahí aunque la página ya no exista: sin esta
   // comprobación el informe citaba enlaces caídos. Se usa el primer enlace vivo de la misma obra.
   async function asegurarEnlace(conversacion, candidata, signal, { primeroCaido = false } = {}) {
@@ -676,6 +685,8 @@ export function crearInvestigador({
   // Con `rehacer`, solo redacta de nuevo con las fuentes que hay (por ejemplo, con las agregadas a
   // mano desde «Ver informe»).
   async function investigar(conversacion, flujo, { retomar = false, rehacer = false } = {}) {
+    // `soloWeb` se guarda con la investigación: al retomarla se sigue con los mismos presupuestos.
+    const opciones = opcionesDe(conversacion);
     const contexto = contextoDe(flujo);
     const { emitir } = contexto;
     const cupo = () => opciones.maxFuentes - conversacion.fuentes.length;
@@ -830,7 +841,8 @@ export function crearInvestigador({
 
     // El saldo de OpenAlex se consulta antes del plan: si hoy no queda, no se piden papers. Al
     // retomar, lo ya hecho cuenta para el tope y el saldo de hoy limita lo que falta.
-    const saldo = saldoAcademico ? await saldoAcademico().catch(() => null) : null;
+    const usaOpenAlex = saldoAcademico && !conversacion.soloWeb;
+    const saldo = usaOpenAlex ? await saldoAcademico().catch(() => null) : null;
     if (saldo) maxLibres = Math.min(maxLibres, hechas(true) + saldo.busquedas);
     if (retomando) {
       const hecho = busquedasHechas(hechas(false), hechas(true));
@@ -887,7 +899,11 @@ export function crearInvestigador({
       if (destinos.dominios.length) {
         emitir("aviso", { texto: `La mitad de las búsquedas web va a: ${destinos.dominios.join(", ")}.` });
       }
-      if (pedidos.academico || pedidos.libros) {
+      if (conversacion.soloWeb) {
+        emitir("aviso", {
+          texto: `Solo web: hasta ${opciones.maxBusquedas} búsquedas web, sin papers ni libros.`,
+        });
+      } else if (pedidos.academico || pedidos.libros) {
         const donde = [
           pedidos.academico && "artículos académicos (OpenAlex, en lugar de Google Scholar)",
           pedidos.libros && "libros",
@@ -916,7 +932,7 @@ export function crearInvestigador({
         if (!conversacion.fuentes.length && !retomando) break;
         // El saldo de OpenAlex se renueva cada día: una investigación larga puede cruzar la
         // renovación y seguir con papers hasta su tope, en vez de quedarse con el saldo del inicio.
-        const actual = saldoAcademico ? await saldoAcademico().catch(() => null) : null;
+        const actual = usaOpenAlex ? await saldoAcademico().catch(() => null) : null;
         if (actual) {
           const antes = finDe(true);
           maxLibres = Math.min(opciones.maxAcademicas ?? Infinity, hechas(true) + actual.busquedas);
